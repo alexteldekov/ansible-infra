@@ -1,0 +1,30 @@
+---
+- name: Ensure FQDN is set in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s+'
+    line: "127.0.1.1 {{ fqdn | default(ansible_hostname + '.' + domain) }} {{ ansible_hostname }}"
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  notify: restart networking services  # опционально
+
+- name: Установить часовой пояс
+  ansible.builtin.timezone:
+    name: "{{ timezone }}"
+  notify: restart cron
+
+- name: Установить пакеты для диагностики и безопасности
+  ansible.builtin.apt:
+    name:
+      - htop
+      - iotop
+      - ufw
+      - fail2ban
+    state: present
+    update_cache: true
+
+- name: Включить UFW
+  community.general.ufw:
+    state: enabled

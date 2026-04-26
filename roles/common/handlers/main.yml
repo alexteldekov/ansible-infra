@@ -1,0 +1,11 @@
+---
+- name: restart cron
+  ansible.builtin.systemd:
+    name: cron
+    state: restarted
+
+- name: restart networking services
+  ansible.builtin.systemd:
+    name: systemd-hostnamed
+    state: restarted
+  when: ansible_service_mgr == 'systemd'

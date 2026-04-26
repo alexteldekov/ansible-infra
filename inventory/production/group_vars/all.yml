@@ -1,0 +1,19 @@
+---
+# Общие параметры для всех серверов
+timezone: Europe/Moscow
+ntp_servers:
+  - 0.ru.pool.ntp.org
+  - 1.ru.pool.ntp.org
+
+# Параметры logwatch по умолчанию (могут быть переопределены в группе)
+logwatch_email: admin@example.com   # заглушка
+logwatch_detail: Med
+logwatch_archive: No
+
+# Настройка MTA (только если нужна почта)
+postfix_install: true
+postfix_type: Internet Site
+postfix_relayhost: ""
+postfix_myorigin: "{{ ansible_fqdn }}"
+
+domain: "t7g.org"                     # основной домен инфраструктуры

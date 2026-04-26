@@ -1,0 +1,10 @@
+# defaults/main.yml
+logwatch_email: "alext@t7g.org"        # Адрес для отчётов
+logwatch_detail: "Med"                  # Уровень детализации: Low, Med, High
+logwatch_archive: "No"                  # Сохранять ли старые отчёты
+
+# Настройка MTA (postfix)
+postfix_install: true                   # Установить и настроить postfix
+postfix_type: "Internet Site"           # Internet Site / Satellite / Local only
+postfix_relayhost: ""                   # Укажите smtp:[mail.example.com]:587 если нужно реле
+postfix_myorigin: "localhost"           # От кого отправлять

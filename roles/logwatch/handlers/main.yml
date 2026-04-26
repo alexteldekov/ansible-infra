@@ -1,0 +1,13 @@
+---
+- name: rebuild aliases
+  ansible.builtin.command: newaliases
+  args:
+    creates: /etc/aliases.db
+  changed_when: true
+
+- name: restart logwatch cron
+  ansible.builtin.systemd:
+    name: cron
+    state: restarted
+    daemon_reload: true
+  when: ansible_service_mgr == 'systemd'

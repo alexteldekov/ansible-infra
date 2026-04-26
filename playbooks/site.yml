@@ -1,0 +1,11 @@
+---
+- hosts: all
+  become: true
+  roles:
+    - common
+
+- hosts: vpn_servers
+  become: true
+  roles:
+    - logwatch
+    # - wireguard   # будущая роль

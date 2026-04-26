@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# Переопределение параметров logwatch для ежедневной отправки отчёта на root
+
+MailTo = {{ mailto }}
+Detail = {{ logwatch_detail }}
+Archive = {{ logwatch_archive }}
+Range = yesterday
+# Формат вывода
+Service = All
+Format = html

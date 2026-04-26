@@ -1,0 +1,5 @@
+---
+logwatch_email: alext@t7g.org          # именно для этого сервера
+postfix_myorigin: vpn2.t7g.org
+# Можно переопределить детализацию отчётов
+logwatch_detail: High

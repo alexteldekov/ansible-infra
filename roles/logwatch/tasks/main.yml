@@ -1,0 +1,65 @@
+---
+- name: Убедиться, что пакет debconf-utils установлен (для неинтерактивной настройки postfix)
+  ansible.builtin.apt:
+    name: debconf-utils
+    state: present
+    update_cache: true
+
+- name: Задать debconf‑значения для postfix (если используется)
+  when: postfix_install
+  ansible.builtin.debconf:
+    name: postfix
+    question: "{{ item.question }}"
+    value: "{{ item.value }}"
+    vtype: "{{ item.vtype }}"
+  loop:
+    - { question: "postfix/main_mailer_type", value: "{{ postfix_type }}", vtype: "string" }
+    - { question: "postfix/mailname", value: "{{ ansible_hostname }}{{ '.' + ansible_domain if ansible_domain is defined else '' }}", vtype: "string" }
+    - { question: "postfix/relayhost", value: "{{ postfix_relayhost }}", vtype: "string" }
+    - { question: "postfix/myorigin", value: "{{ postfix_myorigin }}", vtype: "string" }
+
+- name: Установить необходимые пакеты (logwatch + MTA)
+  ansible.builtin.apt:
+    name:
+      - logwatch
+      - postfix
+#      - mailutils          # утилита mail для тестов, не обязательна
+    state: present
+    update_cache: true
+  when: postfix_install
+
+- name: Установить только logwatch, если postfix не требуется
+  ansible.builtin.apt:
+    name: logwatch
+    state: present
+    update_cache: true
+  when: not postfix_install
+
+- name: Убедиться, что postfix запущен и включен (если установлен)
+  ansible.builtin.service:
+    name: postfix
+    state: started
+    enabled: true
+  when: postfix_install
+
+- name: Настроить пересылку почты для root через /etc/aliases
+  ansible.builtin.lineinfile:
+    path: /etc/aliases
+    regexp: '^root:'
+    line: "root: {{ logwatch_email }}"
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  notify: rebuild aliases
+
+- name: Создать пользовательскую конфигурацию logwatch (переопределяет умолчания)
+  ansible.builtin.template:
+    src: logwatch_override.conf.j2
+    dest: /etc/logwatch/conf/override.conf
+    owner: root
+    group: root
+    mode: '0644'
+  vars:
+    mailto: "root"           # отсылаем на root, а root перенаправляется через aliases
+  notify: restart logwatch cron
