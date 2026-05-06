@@ -1,0 +1,5 @@
+---
+- hosts: vcgnat_servers
+  become: true
+  roles:
+    - vcgnat

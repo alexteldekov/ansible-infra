@@ -1,0 +1,14 @@
+---
+- name: Check Ubuntu distribution
+  fail:
+    msg: "This role supports only Ubuntu Focal Fossa (20.04). Current OS is {{ ansible_distribution }} {{ ansible_distribution_version }}."
+  when: not (ansible_distribution == "Ubuntu" and ansible_distribution_version is version('20.04', '=='))
+
+- name: Install required packages for virtualization
+  ansible.builtin.apt:
+    name:
+      - libvirt-daemon-system
+      - qemu-kvm
+      - msr-tools
+    state: present
+    update_cache: yes

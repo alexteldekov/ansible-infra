@@ -1,0 +1,5 @@
+# ansible-galaxy install -r requirements.yml -p roles/
+roles:
+  - name: ubuntu-pro
+    src: https://github.com/mikepruett3/ansible-role-ubuntu-pro.git
+    version: master

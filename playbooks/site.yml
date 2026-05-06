@@ -3,9 +3,15 @@
   become: true
   roles:
     - common
+    - ubuntu-pro
 
 - hosts: vpn_servers
   become: true
   roles:
     - logwatch
     # - wireguard   # будущая роль
+
+- hosts: vcgnat_servers
+  become: true
+  roles:
+    - vcgnat

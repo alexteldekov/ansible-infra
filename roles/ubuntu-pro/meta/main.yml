@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: mikepruett3
+  description: Ansible role to configure Ubuntu Pro subscription settings on Linux Servers.
+  company: "First American Payment Systems"
+  license: "license (MIT)"
+  min_ansible_version: 2.9
+  platforms:
+  - name: Ubuntu
+  galaxy_tags:
+    - ubuntu
+    - pro
+    - subscription
+    - system

@@ -1,0 +1,18 @@
+---
+# tasks file for ansible-role-ubuntu-pro
+
+- name: "Install jq package"
+  ansible.builtin.apt:
+    name: "jq"
+    state: present
+
+- name: "Collect status of Ubuntu Pro subscription"
+  ansible.builtin.shell:
+    cmd: pro status --format json | jq .attached
+  register: result
+
+- name: "Register host with Ubuntu Pro subscription"
+  ansible.builtin.shell:
+    cmd: sudo pro attach {{ ubuntu_token }}
+  when:
+    - result.stdout == "false"

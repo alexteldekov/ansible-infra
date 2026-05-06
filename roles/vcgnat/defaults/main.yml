@@ -1,0 +1,2 @@
+vcgnat_bridge_name: "br-mgt"
+vcgnat_bridge_interfaces: []  # By default: default route interface

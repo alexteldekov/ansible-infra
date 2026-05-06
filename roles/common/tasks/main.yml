@@ -28,3 +28,10 @@
 - name: Включить UFW
   community.general.ufw:
     state: enabled
+  when: ufw_enabled | default(true)
+
+- name: allow 'sudo' group to have passwordless sudo
+  copy: 
+    dest: "/etc/sudoers.d/sudo-group-nopasswd"
+    content: | 
+      %sudo ALL=(ALL:ALL) NOPASSWD: ALL

@@ -17,3 +17,5 @@ postfix_relayhost: ""
 postfix_myorigin: "{{ ansible_fqdn }}"
 
 domain: "t7g.org"                     # основной домен инфраструктуры
+
+ufw_enabled: true

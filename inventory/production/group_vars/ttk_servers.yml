@@ -1,0 +1,6 @@
+---
+ansible_user: alext
+ansible_become: true
+domain: "ttelecom.ru"
+ufw_enabled: false
+use_ubuntu_pro: true
