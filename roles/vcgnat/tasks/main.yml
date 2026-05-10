@@ -12,3 +12,84 @@
       - msr-tools
     state: present
     update_cache: yes
+
+- name: Ensure libvirt images directory exists
+  file:
+    path: "{{ vcgnat_libvirt_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0711'
+
+- name: Download vcgnat QCOW2 image (with authentication and MD5 check)
+  get_url:
+    url: "{{ vcgnat_qcow2_url }}"
+    dest: "{{ vcgnat_qcow2_dest }}"
+    url_username: "{{ vcgnat_qcow2_user | default(omit) }}"
+    url_password: "{{ vcgnat_qcow2_password | default(omit) }}"
+    checksum: "md5:{{ vcgnat_qcow2_md5 }}"
+    timeout: 300
+    owner: root
+    group: root
+    mode: '0644'
+  register: qcow2_download
+  retries: 2
+  delay: 5
+
+- name: Download hw-configuration tar.gz (idempotent, no checksum)
+  get_url:
+    url: "{{ vcgnat_hwconfig_url }}"
+    dest: "{{ vcgnat_hwconfig_dest }}"
+    timeout: 300
+    owner: root
+    group: root
+    mode: '0644'
+    # force=no (default) - do not re-download if the file exists
+
+- name: Extract hw-configuration archive into its directory
+  ansible.builtin.unarchive:
+    src: "{{ vcgnat_hwconfig_dest }}"
+    dest: "{{ vcgnat_libvirt_dir }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+    creates: "{{ vcgnat_libvirt_dir }}/hw-configuration-master"
+
+- name: Find deb packages in hw-configuration directory for current OS version
+  vars:
+    os_virt_dir: "{{ ansible_distribution }}-{{ ansible_distribution_version }}"
+  find:
+    paths: "{{ vcgnat_hwconfig_dir }}/virt-install/{{ os_virt_dir }}"
+    patterns: "*.deb"
+  register: deb_packages
+  failed_when: false
+
+- name: Fail if no deb packages found for current OS
+  fail:
+    msg: "No deb packages found in {{ vcgnat_hwconfig_dir }}/virt-install/{{ ansible_distribution }}-{{ ansible_distribution_version }}."
+  when:
+    - deb_packages.files | length == 0
+
+- name: Install deb packages from hw-configuration
+  apt:
+    deb: "{{ item.path }}"
+    state: present
+  loop: "{{ deb_packages.files }}"
+  register: install_result
+  when: deb_packages.files | length > 0
+
+- name: Get list of installed package names from deb files
+  set_fact:
+    hwconfig_pkg_names: "{{ deb_packages.files | map(attribute='path') | map('basename') | map('regex_replace', '_.*\\.deb$', '') | list }}"
+  when:
+    - deb_packages.files | length > 0
+
+- name: Hold packages to prevent upgrade from Ubuntu repos
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ hwconfig_pkg_names }}"
+  when:
+    - hwconfig_pkg_names is defined
+    - hwconfig_pkg_names | length > 0

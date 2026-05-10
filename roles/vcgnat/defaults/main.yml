@@ -1,2 +1,14 @@
 vcgnat_bridge_name: "br-mgt"
 vcgnat_bridge_interfaces: []  # By default: default route interface
+
+vcgnat_libvirt_dir: "/var/lib/libvirt/images"
+
+vcgnat_qcow2_url: "https://download.nfware.com/vcgnat_6.6.0.qcow2"
+vcgnat_qcow2_dest: "{{ vcgnat_libvirt_dir }}/vcgnat_6.6.0.qcow2"
+vcgnat_qcow2_md5: "37a580f02011247ef48b667966e90278"
+vcgnat_qcow2_user: ""
+vcgnat_qcow2_password: ""
+
+vcgnat_hwconfig_url: "https://download.trafficsoft.ru/public/hw-configuration/hw-configuration-1.5.3.tar.gz"
+vcgnat_hwconfig_dest: "{{ vcgnat_libvirt_dir }}/hw-configuration-1.5.3.tar.gz"
+vcgnat_hwconfig_dir: "{{ vcgnat_libvirt_dir }}/hw-configuration-master"
