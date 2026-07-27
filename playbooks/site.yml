@@ -9,6 +9,7 @@
   become: true
   roles:
     - logwatch
+    - openvpn-server
     # - wireguard   # будущая роль
 
 - hosts: vcgnat_servers

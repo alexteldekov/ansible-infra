@@ -1,0 +1,7 @@
+- name: install openvpn
+  ansible.builtin.apt:
+    name:
+      - openvpn
+      - easy-rsa
+    state: present
+    update_cache: true
