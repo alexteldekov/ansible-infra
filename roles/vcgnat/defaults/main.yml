@@ -12,3 +12,10 @@ vcgnat_qcow2_password: ""
 vcgnat_hwconfig_url: "https://download.trafficsoft.ru/public/hw-configuration/hw-configuration-1.5.3.tar.gz"
 vcgnat_hwconfig_dest: "{{ vcgnat_libvirt_dir }}/hw-configuration-1.5.3.tar.gz"
 vcgnat_hwconfig_dir: "{{ vcgnat_libvirt_dir }}/hw-configuration-master"
+
+# SNMP
+snmpd_listen_ip: "0.0.0.0"            # listen on all interfaces; access is restricted by com2sec
+snmpd_allowed_sources: []             # list of Zabbix server IP addresses
+snmpd_community: "changeme"           # override in vault.yml
+snmpd_sys_location: "Russia"          # sysLocation value
+snmpd_sys_contact: "root@localhost"   # sysContact value

@@ -1,0 +1,7 @@
+---
+- name: restart snmpd
+  ansible.builtin.systemd:
+    name: snmpd
+    state: restarted
+    enabled: true
+  when: ansible_service_mgr == 'systemd'

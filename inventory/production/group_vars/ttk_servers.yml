@@ -4,3 +4,9 @@ ansible_become: true
 domain: "ttelecom.ru"
 ufw_enabled: false
 use_ubuntu_pro: true
+
+snmpd_allowed_sources:
+  - "91.199.196.186"
+  - "194.8.47.82"
+snmpd_sys_location: "Chekhov, Moscow Region, Russia"
+snmpd_sys_contact: "Alex Teldekov <alext@T7g.ORG>"

@@ -3,6 +3,7 @@
   fail:
     msg: "This role supports only Ubuntu Focal Fossa (20.04). Current OS is {{ ansible_distribution }} {{ ansible_distribution_version }}."
   when: not (ansible_distribution == "Ubuntu" and ansible_distribution_version is version('20.04', '=='))
+  tags: always
 
 - name: Install required packages for virtualization
   ansible.builtin.apt:
@@ -10,8 +11,20 @@
       - libvirt-daemon-system
       - qemu-kvm
       - msr-tools
+      - snmpd
     state: present
     update_cache: yes
+  tags: install
+
+- name: Configure snmpd (listen on network, answer only to Zabbix)
+  ansible.builtin.template:
+    src: snmpd.conf.j2
+    dest: /etc/snmp/snmpd.conf
+    owner: root
+    group: root
+    mode: '0600'
+  notify: restart snmpd
+  tags: snmpd
 
 - name: Ensure libvirt images directory exists
   file:
@@ -20,6 +33,7 @@
     owner: root
     group: root
     mode: '0711'
+  tags: download
 
 - name: Download vcgnat QCOW2 image (with authentication and MD5 check)
   get_url:
@@ -35,6 +49,7 @@
   register: qcow2_download
   retries: 2
   delay: 5
+  tags: download
 
 - name: Download hw-configuration tar.gz (idempotent, no checksum)
   get_url:
@@ -45,6 +60,7 @@
     group: root
     mode: '0644'
     # force=no (default) - do not re-download if the file exists
+  tags: download
 
 - name: Extract hw-configuration archive into its directory
   ansible.builtin.unarchive:
@@ -55,6 +71,7 @@
     group: root
     mode: '0755'
     creates: "{{ vcgnat_libvirt_dir }}/hw-configuration-master"
+  tags: hwconfig
 
 - name: Find deb packages in hw-configuration directory for current OS version
   vars:
@@ -64,12 +81,14 @@
     patterns: "*.deb"
   register: deb_packages
   failed_when: false
+  tags: hwconfig
 
 - name: Fail if no deb packages found for current OS
   fail:
     msg: "No deb packages found in {{ vcgnat_hwconfig_dir }}/virt-install/{{ ansible_distribution }}-{{ ansible_distribution_version }}."
   when:
     - deb_packages.files | length == 0
+  tags: hwconfig
 
 - name: Install deb packages from hw-configuration
   apt:
@@ -78,12 +97,14 @@
   loop: "{{ deb_packages.files }}"
   register: install_result
   when: deb_packages.files | length > 0
+  tags: hwconfig
 
 - name: Get list of installed package names from deb files
   set_fact:
     hwconfig_pkg_names: "{{ deb_packages.files | map(attribute='path') | map('basename') | map('regex_replace', '_.*\\.deb$', '') | list }}"
   when:
     - deb_packages.files | length > 0
+  tags: hwconfig
 
 - name: Hold packages to prevent upgrade from Ubuntu repos
   dpkg_selections:
@@ -93,3 +114,4 @@
   when:
     - hwconfig_pkg_names is defined
     - hwconfig_pkg_names | length > 0
+  tags: hwconfig

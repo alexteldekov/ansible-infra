@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# snmpd configuration for vcgnat: listen on network, answer only to allowed sources
+
+agentAddress udp:{{ snmpd_listen_ip }}:161
+
+# Restrict access to the listed sources with the configured community
+{% for src in snmpd_allowed_sources %}
+com2sec readonly {{ src }} {{ snmpd_community }}
+{% endfor %}
+
+group readonly_group v1 readonly
+group readonly_group v2c readonly
+
+view all included .1 80
+access readonly_group "" any noauth exact all none none
+
+# System information
+sysLocation {{ snmpd_sys_location }}
+sysContact {{ snmpd_sys_contact }}
