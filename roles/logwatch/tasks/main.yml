@@ -17,6 +17,7 @@
     - { question: "postfix/mailname", value: "{{ ansible_hostname }}{{ '.' + ansible_domain if ansible_domain is defined else '' }}", vtype: "string" }
     - { question: "postfix/relayhost", value: "{{ postfix_relayhost }}", vtype: "string" }
     - { question: "postfix/myorigin", value: "{{ postfix_myorigin }}", vtype: "string" }
+    - { question: "postfix/protocols", value: "ipv4", vtype: "select" }
 
 - name: Установить необходимые пакеты (logwatch + MTA)
   ansible.builtin.apt:
