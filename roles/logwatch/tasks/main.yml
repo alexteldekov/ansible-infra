@@ -1,11 +1,11 @@
 ---
-- name: Убедиться, что пакет debconf-utils установлен (для неинтерактивной настройки postfix)
+- name: Ensure debconf-utils is installed (for non-interactive postfix configuration)
   ansible.builtin.apt:
     name: debconf-utils
     state: present
     update_cache: true
 
-- name: Задать debconf‑значения для postfix (если используется)
+- name: Set debconf values for postfix (when used)
   when: postfix_install
   ansible.builtin.debconf:
     name: postfix
@@ -19,24 +19,24 @@
     - { question: "postfix/myorigin", value: "{{ postfix_myorigin }}", vtype: "string" }
     - { question: "postfix/protocols", value: "ipv4", vtype: "select" }
 
-- name: Установить необходимые пакеты (logwatch + MTA)
+- name: Install required packages (logwatch + MTA)
   ansible.builtin.apt:
     name:
       - logwatch
       - postfix
-#      - mailutils          # утилита mail для тестов, не обязательна
+#      - mailutils          # mail utility for testing, optional
     state: present
     update_cache: true
   when: postfix_install
 
-- name: Установить только logwatch, если postfix не требуется
+- name: Install only logwatch when postfix is not required
   ansible.builtin.apt:
     name: logwatch
     state: present
     update_cache: true
   when: not postfix_install
 
-- name: Явно задать inet_protocols = ipv4 в main.cf
+- name: Explicitly set inet_protocols = ipv4 in main.cf
   ansible.builtin.lineinfile:
     path: /etc/postfix/main.cf
     regexp: '^inet_protocols\s*='
@@ -45,14 +45,14 @@
   when: postfix_install
   notify: restart postfix
 
-- name: Убедиться, что postfix запущен и включен (если установлен)
+- name: Ensure postfix is started and enabled (when installed)
   ansible.builtin.service:
     name: postfix
     state: started
     enabled: true
   when: postfix_install
 
-- name: Настроить пересылку почты для root через /etc/aliases
+- name: Configure root mail forwarding via /etc/aliases
   ansible.builtin.lineinfile:
     path: /etc/aliases
     regexp: '^root:'
@@ -63,7 +63,7 @@
     backup: true
   notify: rebuild aliases
 
-- name: Создать пользовательскую конфигурацию logwatch (переопределяет умолчания)
+- name: Create custom logwatch configuration (overrides defaults)
   ansible.builtin.template:
     src: logwatch_override.conf.j2
     dest: /etc/logwatch/conf/override.conf
@@ -71,5 +71,5 @@
     group: root
     mode: '0644'
   vars:
-    mailto: "root"           # отсылаем на root, а root перенаправляется через aliases
+    mailto: "root"           # send to root, which is forwarded via aliases
   notify: restart logwatch cron
