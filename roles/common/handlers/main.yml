@@ -3,9 +3,11 @@
   ansible.builtin.systemd:
     name: cron
     state: restarted
+  tags: [common, timezone]
 
 - name: restart networking services
   ansible.builtin.systemd:
     name: systemd-hostnamed
     state: restarted
   when: ansible_service_mgr == 'systemd'
+  tags: [common, hostname]

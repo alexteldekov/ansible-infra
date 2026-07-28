@@ -8,19 +8,22 @@
     group: root
     mode: '0644'
     backup: true
-  notify: restart networking services  # опционально
+  notify: restart networking services  # optional
+  tags: [common, hostname]
 
-- name: Установить имя хоста (hostname)
+- name: Set system hostname
   ansible.builtin.hostname:
     name: "{{ (fqdn | default(inventory_hostname)).split('.')[0] }}"
   notify: restart networking services
+  tags: [common, hostname]
 
-- name: Установить часовой пояс
+- name: Set timezone
   ansible.builtin.timezone:
     name: "{{ timezone }}"
   notify: restart cron
+  tags: [common, timezone]
 
-- name: Установить пакеты для диагностики и безопасности
+- name: Install diagnostic and security packages
   ansible.builtin.apt:
     name:
       - htop
@@ -29,14 +32,17 @@
       - fail2ban
     state: present
     update_cache: true
+  tags: [common, packages]
 
-- name: Включить UFW
+- name: Enable UFW
   community.general.ufw:
     state: enabled
   when: ufw_enabled | default(true)
+  tags: [common, ufw]
 
-- name: allow 'sudo' group to have passwordless sudo
-  copy: 
+- name: Allow 'sudo' group to have passwordless sudo
+  ansible.builtin.copy:
     dest: "/etc/sudoers.d/sudo-group-nopasswd"
-    content: | 
+    content: |
       %sudo ALL=(ALL:ALL) NOPASSWD: ALL
+  tags: [common, sudo]
