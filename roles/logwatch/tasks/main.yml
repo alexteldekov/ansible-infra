@@ -14,7 +14,7 @@
     vtype: "{{ item.vtype }}"
   loop:
     - { question: "postfix/main_mailer_type", value: "{{ postfix_type }}", vtype: "string" }
-    - { question: "postfix/mailname", value: "{{ ansible_hostname }}{{ '.' + ansible_domain if ansible_domain is defined else '' }}", vtype: "string" }
+    - { question: "postfix/mailname", value: "{{ postfix_myorigin }}", vtype: "string" }
     - { question: "postfix/relayhost", value: "{{ postfix_relayhost }}", vtype: "string" }
     - { question: "postfix/myorigin", value: "{{ postfix_myorigin }}", vtype: "string" }
     - { question: "postfix/protocols", value: "ipv4", vtype: "select" }
@@ -41,6 +41,35 @@
     path: /etc/postfix/main.cf
     regexp: '^inet_protocols\s*='
     line: 'inet_protocols = ipv4'
+    state: present
+  when: postfix_install
+  notify: restart postfix
+
+- name: Ensure /etc/mailname matches FQDN
+  ansible.builtin.copy:
+    dest: /etc/mailname
+    content: "{{ postfix_myorigin }}\n"
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  when: postfix_install
+  notify: restart postfix
+
+- name: Set myhostname in main.cf
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: '^myhostname\s*='
+    line: "myhostname = {{ postfix_myorigin }}"
+    state: present
+  when: postfix_install
+  notify: restart postfix
+
+- name: Set mydestination in main.cf
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: '^mydestination\s*='
+    line: "mydestination = $myhostname, {{ postfix_myorigin }}, localhost.{{ ansible_domain | default('localdomain') }}, localhost"
     state: present
   when: postfix_install
   notify: restart postfix

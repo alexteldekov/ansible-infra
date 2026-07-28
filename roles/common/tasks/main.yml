@@ -3,12 +3,17 @@
   ansible.builtin.lineinfile:
     path: /etc/hosts
     regexp: '^127\.0\.1\.1\s+'
-    line: "127.0.1.1 {{ fqdn | default(ansible_hostname + '.' + domain) }} {{ ansible_hostname }}"
+    line: "127.0.1.1 {{ fqdn | default(inventory_hostname) }} {{ (fqdn | default(inventory_hostname)).split('.')[0] }}"
     owner: root
     group: root
     mode: '0644'
     backup: true
   notify: restart networking services  # опционально
+
+- name: Установить имя хоста (hostname)
+  ansible.builtin.hostname:
+    name: "{{ (fqdn | default(inventory_hostname)).split('.')[0] }}"
+  notify: restart networking services
 
 - name: Установить часовой пояс
   ansible.builtin.timezone:
