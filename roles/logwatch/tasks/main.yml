@@ -36,6 +36,15 @@
     update_cache: true
   when: not postfix_install
 
+- name: Явно задать inet_protocols = ipv4 в main.cf
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: '^inet_protocols\s*='
+    line: 'inet_protocols = ipv4'
+    state: present
+  when: postfix_install
+  notify: restart postfix
+
 - name: Убедиться, что postfix запущен и включен (если установлен)
   ansible.builtin.service:
     name: postfix

@@ -1,4 +1,10 @@
 ---
+- name: restart postfix
+  ansible.builtin.service:
+    name: postfix
+    state: restarted
+  when: ansible_service_mgr == 'systemd'
+
 - name: rebuild aliases
   ansible.builtin.command: newaliases
   args:
