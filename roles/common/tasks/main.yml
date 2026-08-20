@@ -29,6 +29,7 @@
       - htop
       - iotop
       - ufw
+      - net-tools
       - fail2ban
     state: present
     update_cache: true

@@ -1,0 +1,3 @@
+vcgnat_qcow2_url: "https://download.nfware.com/vcgnat_6.6.1.qcow2"
+vcgnat_qcow2_dest: "{{ vcgnat_libvirt_dir }}/vcgnat_6.6.1.qcow2"
+vcgnat_qcow2_md5: "bf7d171b0f9efdec01d70e31f8785303"

@@ -94,6 +94,7 @@
   apt:
     deb: "{{ item.path }}"
     state: present
+    allow_downgrade: true
   loop: "{{ deb_packages.files }}"
   register: install_result
   when: deb_packages.files | length > 0
