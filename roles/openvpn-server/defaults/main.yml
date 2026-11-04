@@ -1,0 +1,91 @@
+---
+# OpenVPN server configuration defaults
+
+# Network topology
+openvpn_protocol: tcp
+openvpn_port: 443
+openvpn_topology: subnet
+openvpn_network: 10.8.2.0
+openvpn_netmask: 255.255.255.0
+
+# Route pushed to clients (home network behind the VPN server)
+home_network: 192.168.0.0
+home_netmask: 255.255.0.0
+
+# Скрипт обновления routes.inc (запускается по таймеру systemd)
+openvpn_routes_script: /usr/local/sbin/update_openvpn_routes.py
+openvpn_routes_inc: "{{ openvpn_config_dir }}/routes.inc"
+openvpn_routes_custom_list: "{{ openvpn_config_dir }}/routes_custom.lst"
+# Подключать ли список antifilter (18+ тыс. маршрутов — клиенты могут захлебнуться)
+openvpn_antifilter_enabled: false
+openvpn_antifilter_url: https://antifilter.download/list/allyouneed.lst
+# Сервисы с iplist.opencck.org, чьи сети добавляются в routes.inc.
+# Имена — как на сайте (site=): youtube.com, discord.com, ...
+# Упавший батч пропускается, остальные обновляются.
+openvpn_iplist_services: []
+openvpn_iplist_base_url: https://iplist.opencck.org
+# Сколько сервисов запрашивать одним HTTP-запросом (чтобы не забанили за спам)
+openvpn_iplist_batch_size: 20
+# Включать ли отдельные ip4-адреса сервисов как /32-маршруты.
+# Осторожно: у крупных сервисов их десятки тысяч (youtube.com — 22+ тыс.)
+openvpn_iplist_include_ip4: false
+
+# Paths
+easyrsa_dir: /etc/openvpn/easyrsa
+ccd_dir: /etc/openvpn/ccd
+openvpn_config_dir: /etc/openvpn
+openvpn_server_name: server
+
+# Client config bundles output directory (on the VPN server)
+client_config_dir: /etc/openvpn/client-configs
+
+# Remote endpoint for client configs (host clients connect to)
+# IP-адрес, а не DNS-имя: DNS-запрос клиента может быть перехвачен/подменён
+openvpn_remote: "{{ ansible_host }}"
+openvpn_remote_port: "{{ openvpn_port }}"
+openvpn_remote_proto: "{{ openvpn_protocol }}"
+
+# DNS pushed to mobile clients (redirect-gateway)
+openvpn_dns_servers:
+  - 8.8.8.8
+  - 1.1.1.1
+openvpn_search_domain: "{{ domain | default('') }}"
+
+# Easy-RSA PKI settings
+easyrsa_key_size: 2048
+easyrsa_ca_expire: 3650
+easyrsa_cert_expire: 3650
+easyrsa_crl_expire: 3650
+easyrsa_country: RU
+easyrsa_province: Moscow
+easyrsa_city: Moscow
+easyrsa_org: t7g.org
+easyrsa_email: admin@t7g.org
+easyrsa_ou: IT
+
+# OpenVPN crypto settings
+openvpn_cipher: AES-256-GCM
+openvpn_auth: SHA256
+openvpn_tls_auth_key: /etc/openvpn/ta.key
+
+# Client list — each entry generates a certificate, a CCD file, and a .ovpn bundle
+# Two client types are supported:
+#
+#   type: router  — Keenetic/Netcraze, routes specific subnets, NO default route
+#   type: mobile  — iPhone/Tunnelblick, full tunnel, default route via VPN
+#
+# openvpn_clients:
+#   - name: router1
+#     type: router
+#     static_ip: 10.8.2.20
+#     client_subnet: 192.168.10.0    # subnet behind the router
+#     client_netmask: 255.255.255.0
+#   - name: iphone-alex
+#     type: mobile
+#     static_ip: 10.8.2.30
+#   - name: macbook-jane
+#     type: mobile
+openvpn_clients: []
+
+# Whether to enable IP forwarding (required for routing)
+openvpn_ip_forward: true

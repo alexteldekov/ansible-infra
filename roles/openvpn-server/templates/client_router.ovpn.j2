@@ -1,0 +1,50 @@
+# {{ ansible_managed }}
+# OpenVPN client configuration — type: router (Keenetic/Netcraze)
+# Client: {{ item.name }}
+# No default route — only specific subnets are routed via VPN
+
+client
+dev tun
+proto {{ openvpn_remote_proto }}-client
+remote {{ openvpn_remote }} {{ openvpn_remote_port }}
+topology {{ openvpn_topology }}
+
+# Do NOT redirect default gateway — only specific routes
+route {{ home_network }} {{ home_netmask }}
+{% for client in openvpn_clients %}
+{% if client.client_subnet is defined and client.client_netmask is defined %}
+route {{ client.client_subnet }} {{ client.client_netmask }}
+{% endif %}
+{% endfor %}
+
+# Keep trying to connect
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+
+# Crypto
+data-ciphers {{ openvpn_cipher }}
+cipher {{ openvpn_cipher }}
+auth {{ openvpn_auth }}
+
+# TLS auth
+key-direction 1
+<tls-auth>
+{{ openvpn_ta_key_b64.content | b64decode }}
+</tls-auth>
+
+# Certificates
+<ca>
+{{ openvpn_ca_cert_b64.content | b64decode }}
+</ca>
+<cert>
+{{ (openvpn_client_certs_b64.results | selectattr('item.name', 'equalto', item.name) | map(attribute='content') | first | b64decode) | regex_replace('(?s).*?(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----).*', '\\1') }}
+</cert>
+<key>
+{{ openvpn_client_keys_b64.results | selectattr('item.name', 'equalto', item.name) | map(attribute='content') | first | b64decode }}
+</key>
+
+# Connection settings
+verb 3
+mute 20

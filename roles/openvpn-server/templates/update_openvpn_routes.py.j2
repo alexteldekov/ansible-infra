@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+"""Обновление routes.inc для OpenVPN из внешних источников.
+
+Источники:
+  1. Сервисы с {{ openvpn_iplist_base_url }} (openvpn_iplist_services):
+      скачиваются батчами по {{ openvpn_iplist_batch_size }} сервисов за запрос.
+      Берутся CIDRv4-зоны; отдельные ip4-адреса — только если
+      openvpn_iplist_include_ip4=true (у крупных сервисов их десятки тысяч).
+      Упавший батч пропускается с warning — остальные обновляются.
+  2. {{ openvpn_antifilter_url }} — список сетей в CIDR (223.130.134.0/24)
+     (отключается через openvpn_antifilter_enabled)
+  3. {{ openvpn_routes_custom_list }} — пополняемый админом список:
+      - сети в формате IP/NETMASK  (149.154.164.0/255.255.252.0)
+      - сети в формате CIDR        (149.154.164.0/22)
+      - имена хостов               (apps.apple.com — резолвятся в IPv4)
+
+Формат routes.inc: push "route <network> <netmask> vpn_gateway"
+Если routes.inc изменился — рестарт openvpn@{{ openvpn_server_name }}.
+"""
+
+import ipaddress
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+
+ROUTES_INC = "{{ openvpn_routes_inc }}"
+CUSTOM_LIST = "{{ openvpn_routes_custom_list }}"
+ANTIFILTER_URL = "{{ openvpn_antifilter_url }}"
+ANTIFILTER_ENABLED = {{ 'True' if openvpn_antifilter_enabled else 'False' }}
+IPLIST_BASE_URL = "{{ openvpn_iplist_base_url }}"
+IPLIST_SERVICES = [{% for s in openvpn_iplist_services %}"{{ s }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+IPLIST_BATCH_SIZE = {{ openvpn_iplist_batch_size }}
+IPLIST_INCLUDE_IP4 = {{ 'True' if openvpn_iplist_include_ip4 else 'False' }}
+OPENVPN_SERVICE = "openvpn@{{ openvpn_server_name }}"
+
+
+def push_line(net):
+    """push-строка для IPv4-сети."""
+    return f'push "route {net.network_address} {net.netmask} vpn_gateway"'
+
+
+def fetch_antifilter():
+    """Скачать список CIDR из antifilter и вернуть push-строки."""
+    lines = set()
+    with urllib.request.urlopen(ANTIFILTER_URL, timeout=30) as resp:
+        for raw in resp:
+            cidr = raw.decode().strip()
+            if not cidr or cidr.startswith("#"):
+                continue
+            try:
+                net = ipaddress.ip_network(cidr, strict=False)
+            except ValueError:
+                continue
+            if net.version != 4:
+                continue
+            lines.add(f'push "route {net.network_address} {net.netmask} vpn_gateway"')
+    return lines
+
+
+def fetch_iplist_services():
+    """Скачать сети сервисов с iplist.opencck.org батчами и вернуть push-строки.
+
+    Сервисы разбиваются на батчи по IPLIST_BATCH_SIZE штук и запрашиваются
+    одним HTTP-запросом каждый (?format=json&site=a&site=b&...).
+    Упавший батч пропускается с warning — остальные обновляются.
+    """
+    lines = set()
+    services = list(IPLIST_SERVICES)
+    for i in range(0, len(services), IPLIST_BATCH_SIZE):
+        batch = services[i : i + IPLIST_BATCH_SIZE]
+        url = IPLIST_BASE_URL + "/?" + urllib.parse.urlencode(
+            {"format": "json", "site": batch}, doseq=True
+        )
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception as e:
+            print(
+                f"Warning: не удалось скачать батч {batch[0]}..{batch[-1]}: {e}",
+                file=sys.stderr,
+            )
+            continue
+        for service in batch:
+            entry = data.get(service)
+            if not isinstance(entry, dict):
+                print(f"Warning: сервис {service} отсутствует в ответе", file=sys.stderr)
+                continue
+            for cidr in entry.get("cidr4", []):
+                try:
+                    net = ipaddress.ip_network(cidr, strict=False)
+                except ValueError:
+                    continue
+                if net.version != 4:
+                    continue
+                lines.add(push_line(net))
+            if IPLIST_INCLUDE_IP4:
+                for ip in entry.get("ip4", []):
+                    try:
+                        net = ipaddress.ip_network(f"{ip}/32", strict=False)
+                    except ValueError:
+                        continue
+                    lines.add(push_line(net))
+        print(f"Загружен батч {batch[0]}..{batch[-1]} ({len(batch)} сервисов).")
+    return lines
+
+
+def parse_custom():
+    """Разобрать routes_custom.lst и вернуть push-строки."""
+    lines = set()
+    if not os.path.exists(CUSTOM_LIST):
+        return lines
+    with open(CUSTOM_LIST) as f:
+        for raw in f:
+            entry = raw.strip()
+            if not entry or entry.startswith("#"):
+                continue
+            if "/" in entry:
+                parts = entry.split("/")
+                if len(parts) != 2:
+                    continue
+                ip_str, suffix = parts
+                try:
+                    ipaddress.IPv4Address(ip_str)
+                except ValueError:
+                    continue
+                if suffix.isdigit():
+                    # CIDR: 149.154.164.0/22
+                    try:
+                        net = ipaddress.ip_network(entry, strict=False)
+                    except ValueError:
+                        continue
+                    lines.add(
+                        f'push "route {net.network_address} {net.netmask} vpn_gateway"'
+                    )
+                else:
+                    # Netmask: 149.154.164.0/255.255.252.0
+                    try:
+                        ipaddress.IPv4Address(suffix)
+                    except ValueError:
+                        continue
+                    lines.add(f'push "route {ip_str} {suffix} vpn_gateway"')
+            else:
+                # Hostname — резолвим в IPv4
+                try:
+                    infos = socket.getaddrinfo(entry, None, socket.AF_INET)
+                except socket.gaierror:
+                    print(f"Не удалось отрезолвить {entry}", file=sys.stderr)
+                    continue
+                for info in set(infos):
+                    ip = info[4][0]
+                    lines.add(
+                        f'push "route {ip} 255.255.255.255 vpn_gateway"'
+                    )
+    return lines
+
+
+def main():
+    routes = set()
+    if IPLIST_SERVICES:
+        routes |= fetch_iplist_services()
+    else:
+        print("Сервисы iplist не заданы (openvpn_iplist_services=[]).")
+
+    if ANTIFILTER_ENABLED:
+        try:
+            routes |= fetch_antifilter()
+        except Exception as e:
+            print(f"Ошибка загрузки antifilter: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("antifilter отключён (openvpn_antifilter_enabled=false).")
+
+    routes |= parse_custom()
+
+    header = "# Сгенерировано update_openvpn_routes.py — не редактируйте вручную\n"
+    body = "\n".join(sorted(routes)) + "\n"
+    new_content = header + body
+
+    old_content = ""
+    if os.path.exists(ROUTES_INC):
+        with open(ROUTES_INC) as f:
+            old_content = f.read()
+
+    if new_content == old_content:
+        print("Маршруты не изменились.")
+        return
+
+    with tempfile.NamedTemporaryFile(
+        "w", dir=os.path.dirname(ROUTES_INC), delete=False
+    ) as tmp:
+        tmp.write(new_content)
+        tmp_path = tmp.name
+    os.chmod(tmp_path, 0o640)
+    os.rename(tmp_path, ROUTES_INC)
+    print(f"routes.inc обновлён ({len(routes)} маршрутов), рестарт openvpn.")
+    subprocess.run(["systemctl", "restart", OPENVPN_SERVICE], check=True)
+
+
+if __name__ == "__main__":
+    main()

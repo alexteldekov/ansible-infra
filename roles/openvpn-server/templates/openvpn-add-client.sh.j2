@@ -1,0 +1,162 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Создание клиента OpenVPN на сервере — без Ansible.
+#
+# Клиент станет «неуправляемым»: Ansible про него не знает и не тронет
+# (сертификат, CCD и .ovpn сохранятся при прогонах роли), но и не будет
+# обновлять его конфиг. Чтобы перевести клиента под Ansible — добавьте
+# его в openvpn_clients в inventory/production/group_vars/vpn_servers.yml.
+#
+# Использование:
+#   openvpn-add-client <имя> <router|mobile> [static_ip] [client_subnet client_netmask]
+#
+# Примеры:
+#   openvpn-add-client keenetic2 router 10.8.2.21 192.168.20.0 255.255.255.0
+#   openvpn-add-client ipad-guest mobile
+#   openvpn-add-client ipad-guest mobile 10.8.2.40
+#
+# Если static_ip не указан — выбирается первый свободный из VPN-подсети.
+# Для type=router можно указать сеть за роутером (client_subnet + netmask):
+# она попадёт в CCD как iroute (видна другим клиентам через client-to-client).
+
+set -euo pipefail
+
+EASYRSA_DIR="{{ easyrsa_dir }}"
+PKI_CA="$EASYRSA_DIR/pki/ca.crt"
+PKI_ISSUED="$EASYRSA_DIR/pki/issued"
+PKI_PRIVATE="$EASYRSA_DIR/pki/private"
+TLS_AUTH_KEY="{{ openvpn_tls_auth_key }}"
+CCD_DIR="{{ ccd_dir }}"
+CLIENT_CONFIG_DIR="{{ client_config_dir }}"
+VPN_NETWORK="{{ openvpn_network }}"
+VPN_NETMASK="{{ openvpn_netmask }}"
+HOME_NETWORK="{{ home_network }}"
+HOME_NETMASK="{{ home_netmask }}"
+REMOTE="{{ openvpn_remote }}"
+REMOTE_PORT="{{ openvpn_remote_port }}"
+REMOTE_PROTO="{{ openvpn_remote_proto }}"
+TOPOLOGY="{{ openvpn_topology }}"
+CIPHER="{{ openvpn_cipher }}"
+AUTH="{{ openvpn_auth }}"
+SEARCH_DOMAIN="{{ openvpn_search_domain | default('') }}"
+DNS_SERVERS="{{ openvpn_dns_servers | join(' ') }}"
+
+NAME="${1:-}"
+TYPE="${2:-}"
+STATIC_IP="${3:-}"
+SUBNET="${4:-}"
+NETMASK="${5:-}"
+
+usage() {
+    sed -n 's/^# \?//p' "$0" | head -n 22
+    exit 1
+}
+
+[ -n "$NAME" ] && [ -n "$TYPE" ] || usage
+case "$TYPE" in
+    router|mobile) ;;
+    *) usage ;;
+esac
+if [ -n "$SUBNET" ] && [ -z "$NETMASK" ]; then usage; fi
+
+[[ "$NAME" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "Ошибка: имя '$NAME' — только буквы, цифры, - и _" >&2; exit 1; }
+if [ "$TYPE" = "router" ] && [ -n "$SUBNET" ] && [ -z "$NETMASK" ]; then usage; fi
+
+CERT="$PKI_ISSUED/$NAME.crt"
+if [ -e "$CERT" ]; then
+    echo "Ошибка: сертификат '$NAME' уже существует ($CERT)" >&2
+    exit 1
+fi
+
+# ---------- Сертификат ----------
+cd "$EASYRSA_DIR"
+EASYRSA_BATCH=yes ./easyrsa --batch build-client-full "$NAME" nopass >/dev/null
+echo "Сертификат $NAME создан."
+
+# ---------- Статический IP ----------
+if [ -z "$STATIC_IP" ]; then
+    PREFIX="${VPN_NETWORK%.*}"
+    USED=$(grep -h 'ifconfig-push' "$CCD_DIR"/* 2>/dev/null | awk '{print $2}' || true)
+    for i in $(seq 10 250); do
+        CANDIDATE="$PREFIX.$i"
+        if ! grep -qx "$CANDIDATE" <<< "$USED"; then
+            STATIC_IP="$CANDIDATE"
+            break
+        fi
+    done
+    [ -n "$STATIC_IP" ] || { echo "Ошибка: нет свободных IP в $VPN_NETWORK" >&2; exit 1; }
+    echo "Назначен свободный IP: $STATIC_IP"
+fi
+
+# ---------- CCD ----------
+CCD_FILE="$CCD_DIR/$NAME"
+{
+    echo "# Создано openvpn-add-client $(date '+%Y-%m-%d %H:%M:%S') — не управляется Ansible"
+    echo "ifconfig-push $STATIC_IP $VPN_NETMASK"
+    if [ "$TYPE" = "router" ] && [ -n "$SUBNET" ]; then
+        echo "iroute $SUBNET $NETMASK"
+    fi
+} > "$CCD_FILE"
+chmod 0640 "$CCD_FILE"
+echo "CCD-файл создан: $CCD_FILE"
+
+# ---------- .ovpn ----------
+OVPN="$CLIENT_CONFIG_DIR/$NAME.ovpn"
+{
+    echo "# Создано openvpn-add-client $(date '+%Y-%m-%d %H:%M:%S') — не управляется Ansible"
+    echo "client"
+    echo "dev tun"
+    echo "proto ${REMOTE_PROTO}-client"
+    echo "remote $REMOTE $REMOTE_PORT"
+    echo "topology $TOPOLOGY"
+    echo
+    if [ "$TYPE" = "mobile" ]; then
+        echo "# Полный туннель — весь трафик через VPN"
+        echo "redirect-gateway def1 bypass-dhcp"
+        for dns in $DNS_SERVERS; do
+            echo "dhcp-option DNS $dns"
+        done
+        if [ -n "$SEARCH_DOMAIN" ]; then
+            echo "dhcp-option DOMAIN $SEARCH_DOMAIN"
+        fi
+        echo "block-outside-dns"
+    else
+        echo "# Без default route — только указанные сети"
+        echo "route $HOME_NETWORK $HOME_NETMASK"
+        # Сети за другими router-клиентами (iroute из их CCD)
+        for f in "$CCD_DIR"/*; do
+            [ "$(basename "$f")" = "$NAME" ] && continue
+            grep -h '^iroute' "$f" 2>/dev/null | awk '{print "route", $2, $3}'
+        done
+    fi
+    echo
+    echo "resolv-retry infinite"
+    echo "nobind"
+    echo "persist-key"
+    echo "persist-tun"
+    echo
+    echo "data-ciphers $CIPHER"
+    echo "cipher $CIPHER"
+    echo "auth $AUTH"
+    echo
+    echo "key-direction 1"
+    echo "<tls-auth>"
+    cat "$TLS_AUTH_KEY"
+    echo "</tls-auth>"
+    echo "<ca>"
+    cat "$PKI_CA"
+    echo "</ca>"
+    echo "<cert>"
+    sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' "$CERT"
+    echo "</cert>"
+    echo "<key>"
+    cat "$PKI_PRIVATE/$NAME.key"
+    echo "</key>"
+    echo
+    echo "verb 3"
+    echo "mute 20"
+} > "$OVPN"
+chmod 0600 "$OVPN"
+echo ".ovpn-бандл создан: $OVPN"
+echo
+echo "Забрать на клиент:  scp root@$(hostname -f):$OVPN ."

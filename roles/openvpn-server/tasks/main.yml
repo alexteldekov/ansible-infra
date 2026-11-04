@@ -1,7 +1,299 @@
-- name: install openvpn
+---
+# ============ Packages ============
+- name: Install OpenVPN and Easy-RSA
   ansible.builtin.apt:
     name:
       - openvpn
       - easy-rsa
     state: present
     update_cache: true
+  tags: [openvpn, packages]
+
+# ============ Easy-RSA PKI ============
+- name: Ensure Easy-RSA directory exists
+  ansible.builtin.file:
+    path: "{{ easyrsa_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+  tags: [openvpn, pki]
+
+- name: Copy Easy-RSA tooling from /usr/share/easy-rsa into working directory
+  ansible.builtin.copy:
+    src: /usr/share/easy-rsa/
+    dest: "{{ easyrsa_dir }}/"
+    remote_src: true
+    owner: root
+    group: root
+    mode: preserve
+  tags: [openvpn, pki]
+
+- name: Initialize Easy-RSA PKI (only if not already initialized)
+  ansible.builtin.command:
+    cmd: ./easyrsa --batch init-pki
+    chdir: "{{ easyrsa_dir }}"
+  environment:
+    EASYRSA_BATCH: "yes"
+  args:
+    creates: "{{ easyrsa_dir }}/pki/private"
+  tags: [openvpn, pki]
+
+- name: Copy Easy-RSA vars configuration
+  ansible.builtin.template:
+    src: easyrsa_vars.j2
+    dest: "{{ easyrsa_dir }}/vars"
+    owner: root
+    group: root
+    mode: '0640'
+  tags: [openvpn, pki]
+
+- name: Build CA (only if ca.crt does not exist)
+  ansible.builtin.command:
+    cmd: ./easyrsa --batch build-ca nopass
+    chdir: "{{ easyrsa_dir }}"
+  environment:
+    EASYRSA_BATCH: "yes"
+  args:
+    creates: "{{ easyrsa_dir }}/pki/ca.crt"
+  tags: [openvpn, pki]
+
+- name: Generate server certificate (only if not already issued)
+  ansible.builtin.command:
+    cmd: ./easyrsa --batch build-server-full {{ openvpn_server_name }} nopass
+    chdir: "{{ easyrsa_dir }}"
+  environment:
+    EASYRSA_BATCH: "yes"
+  args:
+    creates: "{{ easyrsa_dir }}/pki/issued/{{ openvpn_server_name }}.crt"
+  tags: [openvpn, pki]
+
+- name: Generate DH parameters (only if dh.pem does not exist)
+  ansible.builtin.command:
+    cmd: ./easyrsa --batch gen-dh
+    chdir: "{{ easyrsa_dir }}"
+  environment:
+    EASYRSA_BATCH: "yes"
+  args:
+    creates: "{{ easyrsa_dir }}/pki/dh.pem"
+  tags: [openvpn, pki]
+
+- name: Generate CRL (only if crl.pem does not exist)
+  ansible.builtin.command:
+    cmd: ./easyrsa --batch gen-crl
+    chdir: "{{ easyrsa_dir }}"
+  environment:
+    EASYRSA_BATCH: "yes"
+  args:
+    creates: "{{ easyrsa_dir }}/pki/crl.pem"
+  tags: [openvpn, pki]
+
+- name: Ensure CRL is readable by OpenVPN
+  ansible.builtin.file:
+    path: "{{ easyrsa_dir }}/pki/crl.pem"
+    mode: '0644'
+  tags: [openvpn, pki]
+
+# ============ TLS auth key ============
+- name: Generate TLS auth key (only if it does not exist)
+  ansible.builtin.command:
+    cmd: openvpn --genkey --secret {{ openvpn_tls_auth_key }}
+    creates: "{{ openvpn_tls_auth_key }}"
+  tags: [openvpn, pki]
+
+# ============ Client certificates ============
+- name: Generate client certificates
+  ansible.builtin.command:
+    cmd: ./easyrsa --batch build-client-full {{ item.name }} nopass
+    chdir: "{{ easyrsa_dir }}"
+  environment:
+    EASYRSA_BATCH: "yes"
+  args:
+    creates: "{{ easyrsa_dir }}/pki/issued/{{ item.name }}.crt"
+  loop: "{{ openvpn_clients }}"
+  tags: [openvpn, pki, clients]
+
+- name: Deploy client creation helper script
+  ansible.builtin.template:
+    src: openvpn-add-client.sh.j2
+    dest: /usr/local/sbin/openvpn-add-client
+    owner: root
+    group: root
+    mode: '0755'
+  tags: [openvpn, clients]
+
+# ============ Fetch PKI material for .ovpn bundles ============
+# lookup('file') читает файлы на управляющей машине, а PKI живёт на сервере,
+# поэтому забираем содержимое модулем slurp и рендерим шаблоны из этих переменных
+- name: Slurp CA certificate
+  ansible.builtin.slurp:
+    src: "{{ easyrsa_dir }}/pki/ca.crt"
+  register: openvpn_ca_cert_b64
+  tags: [openvpn, clients]
+
+- name: Slurp TLS auth key
+  ansible.builtin.slurp:
+    src: "{{ openvpn_tls_auth_key }}"
+  register: openvpn_ta_key_b64
+  tags: [openvpn, clients]
+
+- name: Slurp client certificates
+  ansible.builtin.slurp:
+    src: "{{ easyrsa_dir }}/pki/issued/{{ item.name }}.crt"
+  loop: "{{ openvpn_clients }}"
+  register: openvpn_client_certs_b64
+  tags: [openvpn, clients]
+
+- name: Slurp client private keys
+  ansible.builtin.slurp:
+    src: "{{ easyrsa_dir }}/pki/private/{{ item.name }}.key"
+  loop: "{{ openvpn_clients }}"
+  register: openvpn_client_keys_b64
+  tags: [openvpn, clients]
+
+# ============ Server configuration ============
+- name: Ensure CCD directory exists
+  ansible.builtin.file:
+    path: "{{ ccd_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+  tags: [openvpn, config]
+
+- name: Ensure client config output directory exists
+  ansible.builtin.file:
+    path: "{{ client_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+  tags: [openvpn, clients]
+
+- name: Deploy server configuration
+  ansible.builtin.template:
+    src: server.conf.j2
+    dest: "{{ openvpn_config_dir }}/server.conf"
+    owner: root
+    group: root
+    mode: '0640'
+  notify: restart openvpn
+  tags: [openvpn, config]
+
+# ============ routes.inc (динамические маршруты) ============
+- name: Deploy route update script
+  ansible.builtin.template:
+    src: update_openvpn_routes.py.j2
+    dest: "{{ openvpn_routes_script }}"
+    owner: root
+    group: root
+    mode: '0755'
+  tags: [openvpn, config, routes]
+
+- name: Ensure routes_custom.lst exists (admin-maintained)
+  ansible.builtin.copy:
+    dest: "{{ openvpn_routes_custom_list }}"
+    owner: root
+    group: root
+    mode: '0644'
+    force: false
+    content: |
+      # Список дополнительных маршрутов для OpenVPN
+      # Формат:
+      #   Сеть:    IP/NETMASK  (149.154.164.0/255.255.252.0)
+      #   Сеть:    CIDR        (149.154.164.0/22)
+      #   Хост:    hostname    (apps.apple.com — резолвится в IPv4)
+      # Строки, начинающиеся с #, игнорируются
+  tags: [openvpn, config, routes]
+
+- name: Deploy systemd service for route update
+  ansible.builtin.template:
+    src: update-openvpn-routes.service.j2
+    dest: /etc/systemd/system/update-openvpn-routes.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  tags: [openvpn, config, routes]
+
+- name: Deploy systemd timer for route update
+  ansible.builtin.template:
+    src: update-openvpn-routes.timer.j2
+    dest: /etc/systemd/system/update-openvpn-routes.timer
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  tags: [openvpn, config, routes]
+
+- name: Enable and start route update timer
+  ansible.builtin.systemd:
+    name: update-openvpn-routes.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [openvpn, config, routes]
+
+- name: Generate initial routes.inc (first run only)
+  ansible.builtin.command:
+    cmd: "{{ openvpn_routes_script }}"
+    creates: "{{ openvpn_routes_inc }}"
+  tags: [openvpn, config, routes]
+
+- name: Deploy per-client CCD files
+  ansible.builtin.template:
+    src: ccd_client.conf.j2
+    dest: "{{ ccd_dir }}/{{ item.name }}"
+    owner: root
+    group: root
+    mode: '0640'
+  loop: "{{ openvpn_clients }}"
+  notify: restart openvpn
+  tags: [openvpn, config, clients]
+
+- name: Generate .ovpn bundles for router clients
+  ansible.builtin.template:
+    src: client_router.ovpn.j2
+    dest: "{{ client_config_dir }}/{{ item.name }}.ovpn"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ openvpn_clients | selectattr('type', 'defined') | selectattr('type', 'equalto', 'router') | list }}"
+  tags: [openvpn, clients]
+
+- name: Generate .ovpn bundles for mobile clients
+  ansible.builtin.template:
+    src: client_mobile.ovpn.j2
+    dest: "{{ client_config_dir }}/{{ item.name }}.ovpn"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ openvpn_clients | selectattr('type', 'defined') | selectattr('type', 'equalto', 'mobile') | list }}"
+  tags: [openvpn, clients]
+
+# ============ IP forwarding ============
+- name: Enable IP forwarding via sysctl
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    state: present
+    reload: true
+  when: openvpn_ip_forward
+  tags: [openvpn, network]
+
+# ============ UFW ============
+- name: Allow OpenVPN port in UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ openvpn_port }}"
+    proto: "{{ openvpn_protocol }}"
+  when: ufw_enabled | default(true)
+  tags: [openvpn, ufw]
+
+# ============ Service ============
+- name: Ensure OpenVPN is started and enabled
+  ansible.builtin.service:
+    name: openvpn@server
+    state: started
+    enabled: true
+  tags: [openvpn, service]

@@ -1,0 +1,65 @@
+# {{ ansible_managed }}
+# OpenVPN server configuration — managed by Ansible
+
+port {{ openvpn_port }}
+proto {{ openvpn_protocol }}-server
+topology {{ openvpn_topology }}
+dev tun
+
+# VPN subnet
+server {{ openvpn_network }} {{ openvpn_netmask }}
+
+# Route pushed to clients (home network behind the VPN server)
+push "route {{ home_network }} {{ home_netmask }}"
+
+# Kernel route on the server itself (for forwarding to the home network)
+route {{ home_network }} {{ home_netmask }}
+
+# Дополнительные маршруты из внешнего файла
+config routes.inc
+
+# Kernel routes to subnets behind router-clients (iroute is in CCD)
+{% for client in openvpn_clients %}
+{% if client.client_subnet is defined and client.client_netmask is defined %}
+route {{ client.client_subnet }} {{ client.client_netmask }}
+{% endif %}
+{% endfor %}
+
+# Client config directory — per-client static IPs and overrides
+client-config-dir {{ ccd_dir }}
+
+# Certificates and keys
+ca {{ easyrsa_dir }}/pki/ca.crt
+cert {{ easyrsa_dir }}/pki/issued/{{ openvpn_server_name }}.crt
+key {{ easyrsa_dir }}/pki/private/{{ openvpn_server_name }}.key
+dh {{ easyrsa_dir }}/pki/dh.pem
+crl-verify {{ easyrsa_dir }}/pki/crl.pem
+
+# TLS auth key (HMAC firewall)
+tls-auth {{ openvpn_tls_auth_key }} 0
+
+# Crypto settings
+# data-ciphers — для клиентов OpenVPN 2.5+; cipher — fallback для старых клиентов
+data-ciphers {{ openvpn_cipher }}
+cipher {{ openvpn_cipher }}
+auth {{ openvpn_auth }}
+
+# Keep clients connected across restarts
+client-to-client
+duplicate-cn
+keepalive 10 120
+persist-key
+persist-tun
+
+# Let the OS tune socket buffers
+sndbuf 0
+rcvbuf 0
+
+# Logging
+# status-файл задаётся юнитом openvpn@server.service (--status /run/openvpn/server.status)
+verb 3
+mute 20
+
+# Run as unprivileged user
+user nobody
+group nogroup

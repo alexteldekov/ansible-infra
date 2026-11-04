@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+# Per-client CCD configuration for {{ item.name }}
+{% if item.static_ip is defined %}
+ifconfig-push {{ item.static_ip }} {{ openvpn_netmask }}
+{% endif %}
+{% if item.client_subnet is defined and item.client_netmask is defined %}
+# Route to subnet behind this client (router)
+iroute {{ item.client_subnet }} {{ item.client_netmask }}
+{% endif %}
