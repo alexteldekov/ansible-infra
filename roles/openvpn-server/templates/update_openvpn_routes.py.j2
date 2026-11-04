@@ -14,6 +14,11 @@
       - сети в формате IP/NETMASK  (149.154.164.0/255.255.252.0)
       - сети в формате CIDR        (149.154.164.0/22)
       - имена хостов               (apps.apple.com — резолвятся в IPv4)
+  4. Российские сети ({{ openvpn_russia_exclude_url }}) — исключение из VPN:
+      пушатся через net_gateway (исходный шлюз клиента), чтобы российский
+      трафик шёл через провайдера, а не через VPN. Актуально прежде всего
+      для mobile-клиентов (redirect-gateway). Сети, уже направляемые в VPN
+      (источники 1-3), не дублируются. Ошибка загрузки прерывает обновление.
 
 Формат routes.inc: push "route <network> <netmask> vpn_gateway"
 Если routes.inc изменился — рестарт openvpn@{{ openvpn_server_name }}.
@@ -37,12 +42,19 @@ IPLIST_BASE_URL = "{{ openvpn_iplist_base_url }}"
 IPLIST_SERVICES = [{% for s in openvpn_iplist_services %}"{{ s }}"{% if not loop.last %}, {% endif %}{% endfor %}]
 IPLIST_BATCH_SIZE = {{ openvpn_iplist_batch_size }}
 IPLIST_INCLUDE_IP4 = {{ 'True' if openvpn_iplist_include_ip4 else 'False' }}
+RUSSIA_EXCLUDE_URL = "{{ openvpn_russia_exclude_url }}"
+RUSSIA_EXCLUDE_ENABLED = {{ 'True' if openvpn_russia_exclude_enabled else 'False' }}
 OPENVPN_SERVICE = "openvpn@{{ openvpn_server_name }}"
 
+# Сети, направляемые в VPN (для исключения дублей из российского списка)
+VPN_NETWORKS = set()
 
-def push_line(net):
-    """push-строка для IPv4-сети."""
-    return f'push "route {net.network_address} {net.netmask} vpn_gateway"'
+
+def push_line(net, gateway="vpn_gateway"):
+    """push-строка для IPv4-сети; vpn_gateway-сети запоминаются."""
+    if gateway == "vpn_gateway":
+        VPN_NETWORKS.add(net)
+    return f'push "route {net.network_address} {net.netmask} {gateway}"'
 
 
 def fetch_antifilter():
@@ -107,6 +119,30 @@ def fetch_iplist_services():
                         continue
                     lines.add(push_line(net))
         print(f"Загружен батч {batch[0]}..{batch[-1]} ({len(batch)} сервисов).")
+    return lines
+
+
+def fetch_russia_exclude():
+    """Скачать российские сети и вернуть push-строки через net_gateway.
+
+    Такие маршруты перекрывают redirect-gateway на mobile-клиентах:
+    российский трафик идёт через провайдера, а не через VPN.
+    Сети, уже направляемые в VPN (сервисы, antifilter, custom), не дублируются.
+    """
+    with urllib.request.urlopen(RUSSIA_EXCLUDE_URL, timeout=60) as resp:
+        data = json.loads(resp.read().decode())
+    lines = set()
+    for cidrs in data.values():
+        if not isinstance(cidrs, list):
+            continue
+        for cidr in cidrs:
+            try:
+                net = ipaddress.ip_network(cidr, strict=False)
+            except ValueError:
+                continue
+            if net.version != 4 or net in VPN_NETWORKS:
+                continue
+            lines.add(push_line(net, gateway="net_gateway"))
     return lines
 
 
@@ -177,6 +213,16 @@ def main():
         print("antifilter отключён (openvpn_antifilter_enabled=false).")
 
     routes |= parse_custom()
+
+    # Российские сети — после всех VPN-источников (нужно VPN_NETWORKS)
+    if RUSSIA_EXCLUDE_ENABLED:
+        try:
+            routes |= fetch_russia_exclude()
+        except Exception as e:
+            print(f"Ошибка загрузки российских сетей: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("Исключение российских сетей отключено (openvpn_russia_exclude_enabled=false).")
 
     header = "# Сгенерировано update_openvpn_routes.py — не редактируйте вручную\n"
     body = "\n".join(sorted(routes)) + "\n"

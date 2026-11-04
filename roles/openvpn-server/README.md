@@ -68,6 +68,8 @@ See `defaults/main.yml`:
 | `openvpn_iplist_base_url` | `https://iplist.opencck.org` | Base URL of the iplist portal |
 | `openvpn_iplist_batch_size` | `20` | Services per HTTP request (batching) |
 | `openvpn_iplist_include_ip4` | `false` | Include individual service IPs as `/32` routes (large services have tens of thousands) |
+| `openvpn_russia_exclude_enabled` | `true` | Push Russian networks via `net_gateway` (ISP route) instead of VPN |
+| `openvpn_russia_exclude_url` | `https://russia.iplist.opencck.org/?format=json&data=cidr4` | Russian networks list URL |
 
 ### `openvpn_clients` format
 
@@ -163,6 +165,7 @@ scp root@<vpn-server>:/etc/openvpn/client-configs/<name>.ovpn .
    - `149.154.164.0/22` — CIDR
    - `apps.apple.com` — hostname (resolved to IPv4, each address becomes a `/32` route)
    - Lines starting with `#` are ignored
+4. **Russian networks exclusion** — `openvpn_russia_exclude_enabled` (default: `true`): CIDRv4 zones from `openvpn_russia_exclude_url` (default: `https://russia.iplist.opencck.org/?format=json&data=cidr4`) are pushed as `push "route <ip> <netmask> net_gateway"` — via the client's original default gateway. This keeps Russian traffic on the ISP route instead of the VPN (mainly relevant for mobile clients with `redirect-gateway`). Networks already routed via VPN (sources 1-3) are not duplicated. A download failure aborts the update (existing routes are preserved).
 
 If the generated `routes.inc` differs from the current one, OpenVPN is restarted so clients receive the updated routes. If the antifilter download fails, the update is aborted (existing routes are preserved).
 
