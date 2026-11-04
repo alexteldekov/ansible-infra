@@ -14,7 +14,8 @@ Ansible role to install and configure a full **OpenVPN** server with **Easy-RSA*
 - Creates the CCD directory (`{{ ccd_dir }}`) and per-client config files (static IPs + `iroute` for router-clients).
 - Generates ready-to-use `.ovpn` client bundles in `{{ client_config_dir }}` with embedded certificates and keys.
 - Enables IP forwarding via `sysctl`.
-- Opens the OpenVPN port in UFW.
+- Opens the OpenVPN port in UFW and allows forwarded traffic from `tun0` (VPN clients → internet/LAN). UFW's default forward policy is DROP, so without the route rule clients can connect but get no traffic through.
+- Adds NAT (`MASQUERADE`) for the VPN subnet via `/etc/ufw/before.rules` — without it, client packets leave the server with `10.8.2.x` source addresses and replies never come back.
 - Enables and starts the `openvpn@server` service.
 
 ## Client types
@@ -60,6 +61,7 @@ See `defaults/main.yml`:
 | `openvpn_tls_auth_key` | `/etc/openvpn/ta.key` | TLS auth key path |
 | `openvpn_clients` | `[]` | List of clients (see below) |
 | `openvpn_ip_forward` | `true` | Whether to enable IP forwarding |
+| `openvpn_nat_subnet` | `10.8.2.0/24` | VPN subnet for NAT masquerade (must match `openvpn_network`/`openvpn_netmask`) |
 | `openvpn_routes_script` | `/usr/local/sbin/update_openvpn_routes.py` | Path to the route update script |
 | `openvpn_routes_inc` | `/etc/openvpn/routes.inc` | Path to generated routes file (included by `server.conf`) |
 | `openvpn_routes_custom_list` | `/etc/openvpn/routes_custom.lst` | Admin-maintained custom routes file |
@@ -116,6 +118,7 @@ For router-clients (`client_subnet` + `client_netmask`), the role generates both
 |---|---|
 | `restart openvpn` | Restarts the `openvpn@server` service |
 | `reload systemd` | Reloads systemd daemon (after unit file changes) |
+| `reload ufw` | Reloads UFW (after `before.rules` NAT changes) |
 
 ## Usage
 

@@ -290,6 +290,31 @@
   when: ufw_enabled | default(true)
   tags: [openvpn, ufw]
 
+- name: Allow forwarded traffic from VPN clients (tun0) to the outside
+  community.general.ufw:
+    rule: allow
+    route: true
+    interface_in: tun0
+    comment: OpenVPN client forwarding
+  when: ufw_enabled | default(true)
+  tags: [openvpn, ufw]
+
+# NAT для VPN-клиентов: без MASQUERADE пакеты уходят в интернет с src 10.8.2.x,
+# и провайдер не знает обратного маршрута. Через before.rules — переживает ufw reload.
+- name: Add NAT masquerade for VPN clients in UFW before.rules
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED — OpenVPN NAT"
+    insertbefore: '^\*filter'
+    block: |
+      *nat
+      :POSTROUTING ACCEPT [0:0]
+      -A POSTROUTING -s {{ openvpn_nat_subnet }} ! -o tun0 -j MASQUERADE
+      COMMIT
+  notify: reload ufw
+  when: ufw_enabled | default(true)
+  tags: [openvpn, ufw]
+
 # ============ Service ============
 - name: Ensure OpenVPN is started and enabled
   ansible.builtin.service:

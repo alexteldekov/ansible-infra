@@ -96,3 +96,5 @@ openvpn_clients: []
 
 # Whether to enable IP forwarding (required for routing)
 openvpn_ip_forward: true
+# NAT: подсеть VPN-клиентов для MASQUERADE (должна совпадать с openvpn_network/netmask)
+openvpn_nat_subnet: 10.8.2.0/24
