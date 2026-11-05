@@ -96,7 +96,15 @@ openvpn_clients:
   # Mobile: macOS Tunnelblick, full tunnel, dynamic IP
   - name: macbook-jane
     type: mobile
+
+  # Router without IPv6 (v4-only client or client with no IPv6 support)
+  - name: gw-old
+    type: router
+    static_ip: 10.8.2.6
+    ipv6: false
 ```
+
+Optional per-client field `ipv6: false` disables IPv6 for that client when `openvpn_ipv6_enabled` is `true` — the CCD file gets `push-remove ifconfig-ipv6` (drops the tunnel v6 address from the `server-ipv6` pool) and `push-remove route-ipv6` (drops all v6 route pushes from `routes.inc`). IPv6 cannot be enabled for a single client when it is disabled globally.
 
 For router-clients (`client_subnet` + `client_netmask`), the role generates both:
 - `iroute` in the CCD file — tells OpenVPN which client owns the subnet
@@ -192,6 +200,9 @@ openvpn-add-client keenetic2 router 10.8.2.21 192.168.20.0 255.255.255.0
 
 # Mobile client, auto-picked free IP
 openvpn-add-client ipad-guest mobile
+
+# Router client without IPv6
+openvpn-add-client gw-old router 10.8.2.22 --no-ipv6
 ```
 
 The script generates the certificate, the CCD file, and a self-contained `.ovpn` bundle in `{{ client_config_dir }}` — identical in format to the Ansible-managed ones.

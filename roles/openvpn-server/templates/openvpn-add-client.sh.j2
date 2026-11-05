@@ -8,16 +8,19 @@
 # его в openvpn_clients в inventory/production/group_vars/vpn_servers.yml.
 #
 # Использование:
-#   openvpn-add-client <имя> <router|mobile> [static_ip] [client_subnet client_netmask]
+#   openvpn-add-client <имя> <router|mobile> [static_ip] [client_subnet client_netmask] [--no-ipv6]
 #
 # Примеры:
 #   openvpn-add-client keenetic2 router 10.8.2.21 192.168.20.0 255.255.255.0
 #   openvpn-add-client ipad-guest mobile
 #   openvpn-add-client ipad-guest mobile 10.8.2.40
+#   openvpn-add-client gw-old router 10.8.2.22 --no-ipv6
 #
 # Если static_ip не указан — выбирается первый свободный из VPN-подсети.
 # Для type=router можно указать сеть за роутером (client_subnet + netmask):
 # она попадёт в CCD как iroute (видна другим клиентам через client-to-client).
+# --no-ipv6 — выключить IPv6 для клиента (push-remove ifconfig-ipv6/route-ipv6
+# в CCD; имеет смысл только при включённом IPv6 на сервере).
 
 set -euo pipefail
 
@@ -46,6 +49,17 @@ TYPE="${2:-}"
 STATIC_IP="${3:-}"
 SUBNET="${4:-}"
 NETMASK="${5:-}"
+
+IPV6_OFF=false
+ARGS=()
+for a in "$@"; do
+    if [ "$a" = "--no-ipv6" ]; then
+        IPV6_OFF=true
+    else
+        ARGS+=("$a")
+    fi
+done
+set -- ${ARGS+"${ARGS[@]}"}
 
 usage() {
     sed -n 's/^# \?//p' "$0" | head -n 22
@@ -95,6 +109,11 @@ CCD_FILE="$CCD_DIR/$NAME"
     echo "ifconfig-push $STATIC_IP $VPN_NETMASK"
     if [ "$TYPE" = "router" ] && [ -n "$SUBNET" ]; then
         echo "iroute $SUBNET $NETMASK"
+    fi
+    if [ "$IPV6_OFF" = true ]; then
+        echo "# IPv6 отключён (--no-ipv6)"
+        echo "push-remove ifconfig-ipv6"
+        echo "push-remove route-ipv6"
     fi
 } > "$CCD_FILE"
 chmod 0640 "$CCD_FILE"

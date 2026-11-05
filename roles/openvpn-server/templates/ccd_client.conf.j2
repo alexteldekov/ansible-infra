@@ -7,3 +7,8 @@ ifconfig-push {{ item.static_ip }} {{ openvpn_netmask }}
 # Route to subnet behind this client (router)
 iroute {{ item.client_subnet }} {{ item.client_netmask }}
 {% endif %}
+{% if openvpn_ipv6_enabled and not (item.ipv6 | default(true)) %}
+# IPv6 disabled for this client (ipv6: false): drop tunnel v6 address and v6 routes
+push-remove ifconfig-ipv6
+push-remove route-ipv6
+{% endif %}

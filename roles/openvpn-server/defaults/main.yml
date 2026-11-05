@@ -93,6 +93,11 @@ openvpn_tls_auth_key: /etc/openvpn/ta.key
 #   type: router  — Keenetic/Netcraze, routes specific subnets, NO default route
 #   type: mobile  — iPhone/Tunnelblick, full tunnel, default route via VPN
 #
+# Optional per-client field ipv6: false — выключить IPv6 для этого клиента
+# (убирает v6-адрес туннеля и v6-маршруты через push-remove в CCD).
+# Работает только при openvpn_ipv6_enabled: true; включить v6 отдельному
+# клиенту при выключенном глобально — нельзя.
+#
 # openvpn_clients:
 #   - name: router1
 #     type: router
@@ -102,8 +107,10 @@ openvpn_tls_auth_key: /etc/openvpn/ta.key
 #   - name: iphone-alex
 #     type: mobile
 #     static_ip: 10.8.2.30
-#   - name: macbook-jane
-#     type: mobile
+#   - name: gw-lenin
+#     type: router
+#     static_ip: 10.8.2.6
+#     ipv6: false                   # v4-only клиент
 openvpn_clients: []
 
 # Whether to enable IP forwarding (required for routing)

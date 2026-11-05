@@ -23,6 +23,11 @@
       не пушатся вовсе — клиенты ходят к ним по нативному маршруту провайдера.
       Ошибка загрузки прерывает обновление.
 
+Перед выводом сети агрегируются (ipaddress.collapse_addresses): вложенные
+и смежные сети схлопываются (например, /32 внутри /23 исчезает, два смежных
+/24 сливаются в /23). Суперсеть собирается только из полного набора детей,
+поэтому агрегация никогда не захватывает лишние адреса.
+
 Формат routes.inc: push "route <network> <netmask> vpn_gateway"
                   push "route-ipv6 <cidr>"
 Если routes.inc изменился — рестарт openvpn@{{ openvpn_server_name }}.
@@ -53,21 +58,25 @@ RUSSIA_EXCLUDE_V6_URL = "{{ openvpn_russia_exclude_v6_url }}"
 RUSSIA_EXCLUDE_ENABLED = {{ 'True' if openvpn_russia_exclude_enabled else 'False' }}
 OPENVPN_SERVICE = "openvpn@{{ openvpn_server_name }}"
 
-# Сети, направляемые в VPN (для исключения дублей из российского списка)
-VPN_NETWORKS = set()
+# Сети, направляемые в VPN
+VPN_V4_NETWORKS = set()
+VPN_V6_NETWORKS = set()
+# Российские IPv4-сети (net_gateway — через исходный шлюз клиента)
+RU_V4_NETWORKS = set()
 # Российские IPv6-сети (фильтр для v6-маршрутов)
 RUSSIA_V6_NETWORKS = set()
 
 
-def push_line(net, gateway="vpn_gateway"):
-    """push-строка для IPv4-сети; vpn_gateway-сети запоминаются."""
+def add_v4(net, gateway="vpn_gateway"):
+    """Добавить IPv4-сеть в набор (vpn_gateway или net_gateway)."""
     if gateway == "vpn_gateway":
-        VPN_NETWORKS.add(net)
-    return f'push "route {net.network_address} {net.netmask} {gateway}"'
+        VPN_V4_NETWORKS.add(net)
+    else:
+        RU_V4_NETWORKS.add(net)
 
 
-def push_line_v6(net, source=""):
-    """push-строка для IPv6-сети; None — если сеть пересекается с российской.
+def add_v6(net, source=""):
+    """Добавить IPv6-сеть в набор; False — если пересекается с российской.
 
     route-ipv6 на tun не умеет net_gateway, поэтому российские v6-сети
     исключить пушем нельзя — их просто не пушим: клиенты ходят к ним
@@ -80,14 +89,13 @@ def push_line_v6(net, source=""):
                 f"Пропуск {net.with_prefixlen}{origin} — пересекается с российской {ru}",
                 file=sys.stderr,
             )
-            return None
-    VPN_NETWORKS.add(net)
-    return f'push "route-ipv6 {net.with_prefixlen}"'
+            return False
+    VPN_V6_NETWORKS.add(net)
+    return True
 
 
 def fetch_antifilter():
-    """Скачать список CIDR из antifilter и вернуть push-строки."""
-    lines = set()
+    """Скачать список CIDR из antifilter и добавить сети в VPN-набор."""
     with urllib.request.urlopen(ANTIFILTER_URL, timeout=30) as resp:
         for raw in resp:
             cidr = raw.decode().strip()
@@ -99,18 +107,16 @@ def fetch_antifilter():
                 continue
             if net.version != 4:
                 continue
-            lines.add(f'push "route {net.network_address} {net.netmask} vpn_gateway"')
-    return lines
+            add_v4(net)
 
 
 def fetch_iplist_services():
-    """Скачать сети сервисов с iplist.opencck.org батчами и вернуть push-строки.
+    """Скачать сети сервисов с iplist.opencck.org батчами и добавить в наборы.
 
     Сервисы разбиваются на батчи по IPLIST_BATCH_SIZE штук и запрашиваются
     одним HTTP-запросом каждый (?format=json&site=a&site=b&...).
     Упавший батч пропускается с warning — остальные обновляются.
     """
-    lines = set()
     services = list(IPLIST_SERVICES)
     for i in range(0, len(services), IPLIST_BATCH_SIZE):
         batch = services[i : i + IPLIST_BATCH_SIZE]
@@ -138,7 +144,7 @@ def fetch_iplist_services():
                     continue
                 if net.version != 4:
                     continue
-                lines.add(push_line(net))
+                add_v4(net)
             if IPV6_ENABLED:
                 # IPv6-сети сервисов — из того же ответа, без доп. запросов
                 for cidr in entry.get("cidr6", []):
@@ -148,39 +154,35 @@ def fetch_iplist_services():
                         continue
                     if net.version != 6:
                         continue
-                    line = push_line_v6(net, service)
-                    if line:
-                        lines.add(line)
+                    add_v6(net, service)
                 if IPLIST_INCLUDE_IP6:
                     for ip in entry.get("ip6", []):
                         try:
                             net = ipaddress.ip_network(f"{ip}/128", strict=False)
                         except ValueError:
                             continue
-                        line = push_line_v6(net, service)
-                        if line:
-                            lines.add(line)
+                        add_v6(net, service)
             if IPLIST_INCLUDE_IP4:
                 for ip in entry.get("ip4", []):
                     try:
                         net = ipaddress.ip_network(f"{ip}/32", strict=False)
                     except ValueError:
                         continue
-                    lines.add(push_line(net))
+                    add_v4(net)
         print(f"Загружен батч {batch[0]}..{batch[-1]} ({len(batch)} сервисов).")
-    return lines
 
 
 def fetch_russia_exclude():
-    """Скачать российские сети и вернуть push-строки через net_gateway.
+    """Скачать российские IPv4-сети и добавить в net_gateway-набор.
 
     Такие маршруты перекрывают redirect-gateway на mobile-клиентах:
     российский трафик идёт через провайдера, а не через VPN.
-    Сети, уже направляемые в VPN (сервисы, antifilter, custom), не дублируются.
+    Сети, точно совпадающие с направляемыми в VPN, не дублируются
+    (явный выбор сервиса побеждает); сеть строго внутри сервисной —
+    пушится: более длинный префикс выигрывает, кусок идёт через провайдера.
     """
     with urllib.request.urlopen(RUSSIA_EXCLUDE_URL, timeout=60) as resp:
         data = json.loads(resp.read().decode())
-    lines = set()
     for cidrs in data.values():
         if not isinstance(cidrs, list):
             continue
@@ -189,14 +191,13 @@ def fetch_russia_exclude():
                 net = ipaddress.ip_network(cidr, strict=False)
             except ValueError:
                 continue
-            if net.version != 4 or net in VPN_NETWORKS:
+            if net.version != 4 or net in VPN_V4_NETWORKS:
                 continue
-            lines.add(push_line(net, gateway="net_gateway"))
-    return lines
+            add_v4(net, gateway="net_gateway")
 
 
 def fetch_russia_exclude_v6():
-    """Скачать российские IPv6-сети в RUSSIA_V6_NETWORKS (фильтр v6-пушей)."""
+    """Скачать российские IPv6-сети в RUSSIA_V6_NETWORKS (фильтр v6-маршрутов)."""
     with urllib.request.urlopen(RUSSIA_EXCLUDE_V6_URL, timeout=60) as resp:
         data = json.loads(resp.read().decode())
     for cidrs in data.values():
@@ -212,10 +213,9 @@ def fetch_russia_exclude_v6():
 
 
 def parse_custom():
-    """Разобрать routes_custom.lst и вернуть push-строки."""
-    lines = set()
+    """Разобрать routes_custom.lst и добавить сети в наборы."""
     if not os.path.exists(CUSTOM_LIST):
-        return lines
+        return
     with open(CUSTOM_LIST) as f:
         for raw in f:
             entry = raw.strip()
@@ -233,30 +233,17 @@ def parse_custom():
                     net6 = None
                 if net6 is not None and net6.version == 6:
                     if IPV6_ENABLED:
-                        line = push_line_v6(net6, "routes_custom.lst")
-                        if line:
-                            lines.add(line)
+                        add_v6(net6, "routes_custom.lst")
                     continue
                 try:
                     ipaddress.IPv4Address(ip_str)
                 except ValueError:
                     continue
-                if suffix.isdigit():
-                    # CIDR: 149.154.164.0/22
-                    try:
-                        net = ipaddress.ip_network(entry, strict=False)
-                    except ValueError:
-                        continue
-                    lines.add(
-                        f'push "route {net.network_address} {net.netmask} vpn_gateway"'
-                    )
-                else:
-                    # Netmask: 149.154.164.0/255.255.252.0
-                    try:
-                        ipaddress.IPv4Address(suffix)
-                    except ValueError:
-                        continue
-                    lines.add(f'push "route {ip_str} {suffix} vpn_gateway"')
+                # CIDR (149.154.164.0/22) или netmask (149.154.164.0/255.255.252.0)
+                try:
+                    add_v4(ipaddress.ip_network(entry, strict=False))
+                except ValueError:
+                    continue
             else:
                 # Hostname — резолвим в IPv4
                 try:
@@ -266,14 +253,44 @@ def parse_custom():
                     continue
                 for info in set(infos):
                     ip = info[4][0]
-                    lines.add(
-                        f'push "route {ip} 255.255.255.255 vpn_gateway"'
-                    )
+                    add_v4(ipaddress.ip_network(f"{ip}/32", strict=False))
+
+
+def build_lines():
+    """Агрегировать сети (collapse_addresses) и сгенерировать push-строки.
+
+    Схлопываются вложенные и смежные сети — суперсеть собирается только
+    из полного набора детей, лишние адреса не захватываются. Российская
+    сеть, совпавшая после агрегации с сервисной, отбрасывается
+    (иначе — два пуша одного префикса с разными шлюзами).
+    """
+    vpn4 = list(ipaddress.collapse_addresses(VPN_V4_NETWORKS))
+    vpn6 = (
+        list(ipaddress.collapse_addresses(VPN_V6_NETWORKS)) if IPV6_ENABLED else []
+    )
+    vpn4_set = set(vpn4)
+    ru4 = [
+        net
+        for net in ipaddress.collapse_addresses(RU_V4_NETWORKS)
+        if net not in vpn4_set
+    ]
+    print(
+        f"Агрегация: VPN v4 {len(VPN_V4_NETWORKS)} -> {len(vpn4)}, "
+        f"VPN v6 {len(VPN_V6_NETWORKS)} -> {len(vpn6)}, "
+        f"российские {len(RU_V4_NETWORKS)} -> {len(ru4)}."
+    )
+
+    lines = set()
+    for net in vpn4:
+        lines.add(f'push "route {net.network_address} {net.netmask} vpn_gateway"')
+    for net in vpn6:
+        lines.add(f'push "route-ipv6 {net.with_prefixlen}"')
+    for net in ru4:
+        lines.add(f'push "route {net.network_address} {net.netmask} net_gateway"')
     return lines
 
 
 def main():
-    routes = set()
     # Российские v6-сети — до всех v6-источников (нужен фильтр RUSSIA_V6_NETWORKS)
     if IPV6_ENABLED and RUSSIA_EXCLUDE_ENABLED:
         try:
@@ -284,30 +301,32 @@ def main():
         print(f"Российских v6-сетей для фильтра: {len(RUSSIA_V6_NETWORKS)}.")
 
     if IPLIST_SERVICES:
-        routes |= fetch_iplist_services()
+        fetch_iplist_services()
     else:
         print("Сервисы iplist не заданы (openvpn_iplist_services=[]).")
 
     if ANTIFILTER_ENABLED:
         try:
-            routes |= fetch_antifilter()
+            fetch_antifilter()
         except Exception as e:
             print(f"Ошибка загрузки antifilter: {e}", file=sys.stderr)
             sys.exit(1)
     else:
         print("antifilter отключён (openvpn_antifilter_enabled=false).")
 
-    routes |= parse_custom()
+    parse_custom()
 
-    # Российские сети — после всех VPN-источников (нужно VPN_NETWORKS)
+    # Российские сети — после всех VPN-источников (нужен VPN_V4_NETWORKS)
     if RUSSIA_EXCLUDE_ENABLED:
         try:
-            routes |= fetch_russia_exclude()
+            fetch_russia_exclude()
         except Exception as e:
             print(f"Ошибка загрузки российских сетей: {e}", file=sys.stderr)
             sys.exit(1)
     else:
         print("Исключение российских сетей отключено (openvpn_russia_exclude_enabled=false).")
+
+    routes = build_lines()
 
     header = "# Сгенерировано update_openvpn_routes.py — не редактируйте вручную\n"
     body = "\n".join(sorted(routes)) + "\n"
