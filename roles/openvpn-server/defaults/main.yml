@@ -11,7 +11,7 @@ openvpn_netmask: 255.255.255.0
 # IPv6 в туннеле: сервер выдаёт клиентам ULA-подсеть, на выходе NAT66 (MASQUERADE),
 # IPv6-маршруты сервисов пушатся как route-ipv6. Выключите, если на сервере
 # нет IPv6-связности.
-openvpn_ipv6_enabled: true
+openvpn_ipv6_enabled: false
 openvpn_ipv6_prefix: fd00:10:8:2::/64
 
 # Route pushed to clients (home network behind the VPN server)

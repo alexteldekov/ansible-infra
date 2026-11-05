@@ -66,17 +66,18 @@ def push_line(net, gateway="vpn_gateway"):
     return f'push "route {net.network_address} {net.netmask} {gateway}"'
 
 
-def push_line_v6(net):
+def push_line_v6(net, source=""):
     """push-строка для IPv6-сети; None — если сеть пересекается с российской.
 
     route-ipv6 на tun не умеет net_gateway, поэтому российские v6-сети
     исключить пушем нельзя — их просто не пушим: клиенты ходят к ним
-    по нативному маршруту провайдера.
+    по нативному маршруту провайдера. source — откуда сеть (сервис/custom).
     """
     for ru in RUSSIA_V6_NETWORKS:
         if net.subnet_of(ru) or ru.subnet_of(net):
+            origin = f" ({source})" if source else ""
             print(
-                f"Пропуск {net.with_prefixlen} — пересекается с российской {ru}",
+                f"Пропуск {net.with_prefixlen}{origin} — пересекается с российской {ru}",
                 file=sys.stderr,
             )
             return None
@@ -147,7 +148,7 @@ def fetch_iplist_services():
                         continue
                     if net.version != 6:
                         continue
-                    line = push_line_v6(net)
+                    line = push_line_v6(net, service)
                     if line:
                         lines.add(line)
                 if IPLIST_INCLUDE_IP6:
@@ -156,7 +157,7 @@ def fetch_iplist_services():
                             net = ipaddress.ip_network(f"{ip}/128", strict=False)
                         except ValueError:
                             continue
-                        line = push_line_v6(net)
+                        line = push_line_v6(net, service)
                         if line:
                             lines.add(line)
             if IPLIST_INCLUDE_IP4:
@@ -232,7 +233,7 @@ def parse_custom():
                     net6 = None
                 if net6 is not None and net6.version == 6:
                     if IPV6_ENABLED:
-                        line = push_line_v6(net6)
+                        line = push_line_v6(net6, "routes_custom.lst")
                         if line:
                             lines.add(line)
                     continue
