@@ -9,7 +9,7 @@ Ansible role to install and configure a full **OpenVPN** server with **Easy-RSA*
 - Generates the server certificate, DH parameters, CRL, and a TLS auth key.
 - Generates client certificates for every entry in `openvpn_clients`.
 - Deploys `/usr/local/sbin/openvpn-add-client` — a helper script to create clients directly on the server, without Ansible (see below).
-- Deploys `/etc/openvpn/server.conf` from a template: TCP/443, `subnet` topology, pushes a route to `home_network`.
+- Deploys `/etc/openvpn/server.conf` from a template: TCP/443, `subnet` topology, pushes a route to `home_network`. Optional IPv6 in the tunnel (`server-ipv6` with a ULA prefix + NAT66 masquerade on exit).
 - Deploys a Python script (`/usr/local/sbin/update_openvpn_routes.py`) + systemd timer that daily fetches routes from [antifilter.download](https://antifilter.download/list/allyouneed.lst) and a locally-maintained `routes_custom.lst`, generates `routes.inc`, and restarts OpenVPN if routes changed.
 - Creates the CCD directory (`{{ ccd_dir }}`) and per-client config files (static IPs + `iroute` for router-clients).
 - Generates ready-to-use `.ovpn` client bundles in `{{ client_config_dir }}` with embedded certificates and keys.
@@ -28,7 +28,7 @@ A router with a home network behind it. Does **not** redirect the default route 
 
 ### `mobile` — iPhone (OpenVPN Connect) / macOS (Tunnelblick)
 
-A mobile device that tunnels **all** traffic through the VPN. The `.ovpn` bundle contains `redirect-gateway def1 bypass-dhcp`, DNS server options, and `block-outside-dns`.
+A mobile device that tunnels **all** traffic through the VPN. The `.ovpn` bundle contains `redirect-gateway def1 bypass-dhcp`, DNS server options, `block-outside-dns`, and `block-ipv6` (redirect-gateway only covers IPv4 — without blocking, dual-stack services would leak around the VPN via native IPv6).
 
 ## Variables
 
@@ -41,6 +41,8 @@ See `defaults/main.yml`:
 | `openvpn_topology` | `subnet` | Network topology |
 | `openvpn_network` | `10.8.2.0` | VPN subnet address |
 | `openvpn_netmask` | `255.255.255.0` | VPN subnet netmask |
+| `openvpn_ipv6_enabled` | `true` | IPv6 in the tunnel (`server-ipv6`, NAT66, `route-ipv6` pushes). Disable if the server has no IPv6 connectivity |
+| `openvpn_ipv6_prefix` | `fd00:10:8:2::/64` | ULA prefix for tunnel IPv6 (NAT66 on exit) |
 | `home_network` | `192.168.0.0` | Home network pushed to clients |
 | `home_netmask` | `255.255.0.0` | Home network netmask |
 | `easyrsa_dir` | `/etc/openvpn/easyrsa` | Easy-RSA working directory |
@@ -70,8 +72,10 @@ See `defaults/main.yml`:
 | `openvpn_iplist_base_url` | `https://iplist.opencck.org` | Base URL of the iplist portal |
 | `openvpn_iplist_batch_size` | `20` | Services per HTTP request (batching) |
 | `openvpn_iplist_include_ip4` | `false` | Include individual service IPs as `/32` routes (large services have tens of thousands) |
+| `openvpn_iplist_include_ip6` | `false` | Include individual service IPv6 addresses as `/128` `route-ipv6` pushes |
 | `openvpn_russia_exclude_enabled` | `true` | Push Russian networks via `net_gateway` (ISP route) instead of VPN |
-| `openvpn_russia_exclude_url` | `https://russia.iplist.opencck.org/?format=json&data=cidr4` | Russian networks list URL |
+| `openvpn_russia_exclude_url` | `https://russia.iplist.opencck.org/?format=json&data=cidr4` | Russian networks list URL (IPv4) |
+| `openvpn_russia_exclude_v6_url` | `https://russia.iplist.opencck.org/?format=json&data=cidr6` | Russian networks list URL (IPv6, used as a filter) |
 
 ### `openvpn_clients` format
 
@@ -161,14 +165,14 @@ scp root@<vpn-server>:/etc/openvpn/client-configs/<name>.ovpn .
 
 ### Sources
 
-1. **iplist.opencck.org services** — `openvpn_iplist_services` (default: `[]`) lists service names as they appear on the site (`youtube.com`, `discord.com`, ...). Services are fetched in batches of `openvpn_iplist_batch_size` (default: `20`) per HTTP request (`?format=json&site=a&site=b&...`) from `openvpn_iplist_base_url` (default: `https://iplist.opencck.org`). Only `cidr4` zones are used; individual `ip4` addresses can be included as `/32` routes via `openvpn_iplist_include_ip4` (default: `false` — large services have tens of thousands of them). A failed batch is skipped with a warning; the rest are still updated.
+1. **iplist.opencck.org services** — `openvpn_iplist_services` (default: `[]`) lists service names as they appear on the site (`youtube.com`, `discord.com`, ...). Services are fetched in batches of `openvpn_iplist_batch_size` (default: `20`) per HTTP request (`?format=json&site=a&site=b&...`) from `openvpn_iplist_base_url` (default: `https://iplist.opencck.org`). Only `cidr4` zones are used; individual `ip4` addresses can be included as `/32` routes via `openvpn_iplist_include_ip4` (default: `false` — large services have tens of thousands of them). With `openvpn_ipv6_enabled` the `cidr6` zones are also pushed as `push "route-ipv6 <cidr>"` (and `ip6` as `/128` via `openvpn_iplist_include_ip6`). A failed batch is skipped with a warning; the rest are still updated.
 2. **antifilter.download** — `{{ openvpn_antifilter_url }}` returns a list of CIDR networks (`223.130.134.0/24`). These are converted to `push "route <ip> <netmask> vpn_gateway"` lines. Disabled by default (`openvpn_antifilter_enabled: false`); if enabled, a download failure aborts the update (existing routes are preserved).
 3. **`/etc/openvpn/routes_custom.lst`** — admin-maintained file, one entry per line:
    - `149.154.164.0/255.255.252.0` — network/netmask
    - `149.154.164.0/22` — CIDR
    - `apps.apple.com` — hostname (resolved to IPv4, each address becomes a `/32` route)
    - Lines starting with `#` are ignored
-4. **Russian networks exclusion** — `openvpn_russia_exclude_enabled` (default: `true`): CIDRv4 zones from `openvpn_russia_exclude_url` (default: `https://russia.iplist.opencck.org/?format=json&data=cidr4`) are pushed as `push "route <ip> <netmask> net_gateway"` — via the client's original default gateway. This keeps Russian traffic on the ISP route instead of the VPN (mainly relevant for mobile clients with `redirect-gateway`). Networks already routed via VPN (sources 1-3) are not duplicated. A download failure aborts the update (existing routes are preserved).
+4. **Russian networks exclusion** — `openvpn_russia_exclude_enabled` (default: `true`): IPv4 zones from `openvpn_russia_exclude_url` (default: `https://russia.iplist.opencck.org/?format=json&data=cidr4`) are pushed as `push "route <ip> <netmask> net_gateway"` — via the client's original default gateway (mainly relevant for mobile clients with `redirect-gateway`). For IPv6, `route-ipv6` on `tun` cannot express `net_gateway`, so zones from `openvpn_russia_exclude_v6_url` (default: `...&data=cidr6`) act as a **filter**: any service/custom IPv6 route overlapping a Russian network is not pushed at all — clients reach it via their native ISP route. Networks already routed via VPN (sources 1-3) are not duplicated in the v4 exclusions. A download failure aborts the update (existing routes are preserved).
 
 If the generated `routes.inc` differs from the current one, OpenVPN is restarted so clients receive the updated routes. If the antifilter download fails, the update is aborted (existing routes are preserved).
 

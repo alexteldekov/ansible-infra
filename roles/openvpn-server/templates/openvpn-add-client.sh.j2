@@ -113,6 +113,8 @@ OVPN="$CLIENT_CONFIG_DIR/$NAME.ovpn"
     if [ "$TYPE" = "mobile" ]; then
         echo "# Полный туннель — весь трафик через VPN"
         echo "redirect-gateway def1 bypass-dhcp"
+        echo "# Глушим IPv6-утечку (redirect-gateway покрывает только IPv4)"
+        echo "block-ipv6"
         for dns in $DNS_SERVERS; do
             echo "dhcp-option DNS $dns"
         done

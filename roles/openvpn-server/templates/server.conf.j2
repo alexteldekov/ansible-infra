@@ -8,6 +8,10 @@ dev tun
 
 # VPN subnet
 server {{ openvpn_network }} {{ openvpn_netmask }}
+{% if openvpn_ipv6_enabled %}
+# IPv6 в туннеле (ULA-подсеть, NAT66 на выходе)
+server-ipv6 {{ openvpn_ipv6_prefix }}
+{% endif %}
 
 # Route pushed to clients (home network behind the VPN server)
 push "route {{ home_network }} {{ home_netmask }}"

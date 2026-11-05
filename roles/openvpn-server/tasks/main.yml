@@ -281,6 +281,15 @@
   when: openvpn_ip_forward
   tags: [openvpn, network]
 
+- name: Enable IPv6 forwarding via sysctl
+  ansible.posix.sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: "1"
+    state: present
+    reload: true
+  when: openvpn_ip_forward and openvpn_ipv6_enabled
+  tags: [openvpn, network]
+
 # ============ UFW ============
 - name: Allow OpenVPN port in UFW
   community.general.ufw:
@@ -313,6 +322,22 @@
       COMMIT
   notify: reload ufw
   when: ufw_enabled | default(true)
+  tags: [openvpn, ufw]
+
+# NAT66: то же для IPv6 — иначе v6-пакеты клиентов выйдут с ULA-адресом,
+# который не маршрутизируется в интернете
+- name: Add NAT66 masquerade for VPN clients in UFW before6.rules
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before6.rules
+    marker: "# {mark} ANSIBLE MANAGED — OpenVPN NAT66"
+    insertbefore: '^\*filter'
+    block: |
+      *nat
+      :POSTROUTING ACCEPT [0:0]
+      -A POSTROUTING -s {{ openvpn_ipv6_prefix }} ! -o tun0 -j MASQUERADE
+      COMMIT
+  notify: reload ufw
+  when: ufw_enabled | default(true) and openvpn_ipv6_enabled
   tags: [openvpn, ufw]
 
 # ============ Service ============

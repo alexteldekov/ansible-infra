@@ -8,6 +8,12 @@ openvpn_topology: subnet
 openvpn_network: 10.8.2.0
 openvpn_netmask: 255.255.255.0
 
+# IPv6 в туннеле: сервер выдаёт клиентам ULA-подсеть, на выходе NAT66 (MASQUERADE),
+# IPv6-маршруты сервисов пушатся как route-ipv6. Выключите, если на сервере
+# нет IPv6-связности.
+openvpn_ipv6_enabled: true
+openvpn_ipv6_prefix: fd00:10:8:2::/64
+
 # Route pushed to clients (home network behind the VPN server)
 home_network: 192.168.0.0
 home_netmask: 255.255.0.0
@@ -29,6 +35,8 @@ openvpn_iplist_batch_size: 20
 # Включать ли отдельные ip4-адреса сервисов как /32-маршруты.
 # Осторожно: у крупных сервисов их десятки тысяч (youtube.com — 22+ тыс.)
 openvpn_iplist_include_ip4: false
+# То же для IPv6 (ip6 как /128-маршруты route-ipv6)
+openvpn_iplist_include_ip6: false
 # Исключать российские сети из VPN: пушатся маршруты через net_gateway
 # (исходный шлюз клиента), чтобы российский трафик шёл через провайдера.
 # Актуально прежде всего для mobile-клиентов (redirect-gateway).
@@ -36,6 +44,10 @@ openvpn_iplist_include_ip4: false
 # прерывает обновление (старые маршруты сохраняются).
 openvpn_russia_exclude_enabled: true
 openvpn_russia_exclude_url: https://russia.iplist.opencck.org/?format=json&data=cidr4
+# Российские IPv6-сети: route-ipv6 на tun не умеет net_gateway, поэтому
+# v6-сети, пересекающиеся с этим списком, не пушатся вовсе (фильтр) —
+# клиенты ходят к ним по нативному маршруту провайдера
+openvpn_russia_exclude_v6_url: https://russia.iplist.opencck.org/?format=json&data=cidr6
 
 # Paths
 easyrsa_dir: /etc/openvpn/easyrsa

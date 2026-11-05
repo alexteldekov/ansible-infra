@@ -10,7 +10,10 @@ remote {{ openvpn_remote }} {{ openvpn_remote_port }}
 topology {{ openvpn_topology }}
 
 # Redirect ALL traffic through the VPN
+# (redirect-gateway покрывает только IPv4; block-ipv6 глушит IPv6-утечку —
+# весь трафик мобильного клиента идёт через VPN по IPv4)
 redirect-gateway def1 bypass-dhcp
+block-ipv6
 
 # DNS servers pushed by server
 {% for dns in openvpn_dns_servers %}
