@@ -46,8 +46,8 @@ openvpn_iplist_services:
 #   - aistudio.google.com
 #   - canva.com
    - chatgpt.com
-   - claude.ai
-   - copilot
+#   - claude.ai
+#   - copilot
 #   - cursor.com
 #   - deepl.com
 #   - deepseek.com
@@ -55,7 +55,7 @@ openvpn_iplist_services:
 #   - grammarly.com
    - grok.com
 #   - kilo.ai
-   - meta.ai
+#   - meta.ai
 #   - notebooklm.google
 #   - perplexity.ai
 #   - pollo.ai
@@ -82,7 +82,7 @@ openvpn_iplist_services:
 #   # === art (13) ===
 #   - archiveofourown.org
 #   - danbooru.donmai.us
-   - deviantart.com
+#   - deviantart.com
 #   - e621.net
 #   - ficbook.net
 #   - gelbooru.com
@@ -105,7 +105,7 @@ openvpn_iplist_services:
 #   - duolingo.com
    - flibusta.is
 #   - ieee.org
-   - mrakopedia.net
+#   - mrakopedia.net
 #   - refactoring.guru
 #   - wikiart.org
 #   - znanija.com
@@ -125,7 +125,7 @@ openvpn_iplist_services:
 #   - bitninja.com
 #   - cloudlinux.com
 #   - godaddy.com
-   - hetzner.com
+#   - hetzner.com
 #   - namecheap.com
 #   # === jetbrains (3) ===
 #   - jetbrains.com
@@ -245,10 +245,10 @@ openvpn_iplist_services:
 #   - make.com
    - medium.com
 #   - miro.com
-   - myheritage.com
+#   - myheritage.com
 #   - naukri.com
 #   - notepad-plus-plus.org
-   - notion.so
+#   - notion.so
 #   - proton.me
 #   - proxy6.net
 #   - proxyline.net
@@ -262,12 +262,12 @@ openvpn_iplist_services:
 #   - zapier.com
 #   # === torrent (12) ===
 #   - 1337x.to
-   - booktracker.org
+#   - booktracker.org
 #   - filmitorrent.net
 #   - freetp.org
-   - kinozal.me
+#   - kinozal.me
 #   - newstudio.tv
-   - nnmclub.to
+#   - nnmclub.to
 #   - rustorka.com
    - rutor.info
    - rutracker.org
