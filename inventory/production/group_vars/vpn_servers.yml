@@ -291,3 +291,104 @@ openvpn_iplist_services:
 #   # === youtube (2) ===
 #   - revanced.app
    - youtube.com
+
+# ============================================================================
+# Российские порталы-исключения (russia.iplist.opencck.org)
+#
+# Сети этих порталов считаются российскими: вырезаются из VPN-маршрутов
+# (routes.inc) и пушатся mobile-клиентам через net_gateway (routes-ru.inc).
+# Чем больше порталов — тем больше net_gateway-маршрутов у mobile-клиентов,
+# выбирайте только нужные. Полный каталог и поиск: russia.iplist.opencck.org
+#
+# Чтобы включить нужные: замените "openvpn_russia_exclude_portals: []" на
+# "openvpn_russia_exclude_portals:" и раскомментируйте строки (удалите "# ").
+# ============================================================================
+openvpn_russia_exclude_portals:
+#   # порталов: 87, сетей всего: 2074
+   - 2gis.ru  # 66 сетей
+   - alfabank.ru  # 53 сетей
+#   - aliexpress.ru  # 28 сетей
+   - avito.ru  # 22 сетей
+#   - avtodor-tr.ru  # 8 сетей
+   - beeline.ru  # 56 сетей
+   - bestbenefits.ru  # 3 сетей
+#   - bitrix24.ru  # 41 сетей
+   - cdek.ru  # 23 сетей
+#   - cian.ru  # 11 сетей
+#   - detmir.ru  # 41 сетей
+   - dzen.ru  # 10 сетей
+   - fssp.gov.ru  # 5 сетей
+#   - gazprombank.ru  # 12 сетей
+#   - gb.ru  # 15 сетей
+   - genotek.ru  # 23 сетей
+   - gosuslugi.ru  # 27 сетей
+   - habr.com  # 15 сетей
+   - hh.ru  # 6 сетей
+   - invitro.ru  # 6 сетей
+   - lamoda.ru  # 25 сетей
+   - leroymerlin.ru  # 3 сетей
+   - magnit.ru  # 77 сетей
+#   - mail.ru  # 56 сетей
+#   - mailru@cloud.mail.ru  # 1 сетей
+#   - mailru@news.mail.ru  # 1 сетей
+#   - mailru@other  # 9 сетей
+#   - mailru@otvet.mail.ru  # 1 сетей
+   - max.ru  # 15 сетей
+#   - medsi.ru  # 12 сетей
+   - megafon.ru  # 108 сетей
+#   - mos.ru  # 141 сетей
+#   - mosenergosbyt.ru  # 5 сетей
+#   - mosobleirc.ru  # 3 сетей
+#   - mosreg.ru  # 21 сетей
+   - mts.ru  # 118 сетей
+   - mvd.ru  # 4 сетей
+#   - myspar.ru  # 6 сетей
+   - nalog.ru  # 38 сетей
+   - ok.ru  # 9 сетей
+#   - onepricecoffee.com  # 5 сетей
+   - ozon.ru  # 25 сетей
+   - pochta.ru  # 7 сетей
+#   - rendez-vous.ru  # 6 сетей
+#   - reso.ru  # 5 сетей
+   - rosreestr.gov.ru  # 4 сетей
+   - roszdravnadzor.gov.ru  # 2 сетей
+#   - rustore.ru  # 8 сетей
+   - rutube.ru  # 20 сетей
+   - rzd.ru  # 27 сетей
+#   - saby.ru  # 7 сетей
+   - sberbank.ru  # 60 сетей
+#   - sferum.ru  # 8 сетей
+#   - skillbox.ru  # 58 сетей
+#   - skillfactory.ru  # 32 сетей
+   - t2.ru  # 66 сетей
+#   - tamtam.chat  # 2 сетей
+   - tbank.ru  # 11 сетей
+#   - tenderplan.ru  # 6 сетей
+#   - tetrika-school.ru  # 29 сетей
+#   - twinby.ru  # 2 сетей
+#   - uchi.ru  # 23 сетей
+   - vk.com  # 33 сетей
+   - vk@vkplay.ru  # 10 сетей
+   - vk@vkvideo.ru  # 4 сетей
+   - vkusnoitochka.ru  # 11 сетей
+   - vkusvill.ru  # 41 сетей
+#   - vtb.ru  # 78 сетей
+   - wb.ru  # 14 сетей
+   - x5.ru  # 8 сетей
+   - yandex.ru  # 109 сетей
+   - yandex@alice  # 13 сетей
+   - yandex@auto.ru  # 9 сетей
+   - yandex@business  # 9 сетей
+   - yandex@cdn  # 41 сетей
+   - yandex@cloud  # 45 сетей
+   - yandex@disk  # 9 сетей
+   - yandex@kinopoisk.ru  # 16 сетей
+   - yandex@mail  # 13 сетей
+   - yandex@maps  # 16 сетей
+   - yandex@market  # 20 сетей
+   - yandex@media  # 15 сетей
+   - yandex@other  # 4 сетей
+   - yandex@smartcaptcha  # 4 сетей
+   - yandex@tools  # 7 сетей
+   - yandex@web  # 6 сетей
+   - youla.ru  # 2 сетей

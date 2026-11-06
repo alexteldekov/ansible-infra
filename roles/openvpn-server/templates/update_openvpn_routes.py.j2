@@ -16,8 +16,10 @@
       - сети в формате IP/NETMASK  (149.154.164.0/255.255.252.0)
       - сети в формате CIDR        (149.154.164.0/22, 2a00:1450:4000::/37)
       - имена хостов               (apps.apple.com — резолвятся в IPv4)
-  4. Российские сети (russia.iplist.opencck.org) — российский трафик никогда
-      не должен ходить через VPN:
+  4. Российские сети ({{ openvpn_russia_exclude_base_url }}) — российский
+      трафик никогда не должен ходить через VPN. Источники — порталы из
+      openvpn_russia_exclude_portals (запрашиваются батчами, как сервисы);
+      пустой список = российские исключения отключены:
       - из VPN-маршрутов российские части вырезаются (cut_russian_v4):
         точное совпадение — сеть не пушится вовсе; российская строго внутри
         VPN — сеть режется на префиксы без российской части (address_exclude);
@@ -35,11 +37,15 @@
         v6-сети, пересекающиеся с российским списком, не пушатся вовсе.
       Ошибка загрузки прерывает обновление.
 
-Перед выводом сети агрегируются (ipaddress.collapse_addresses): вложенные
-и смежные сети схлопываются (например, /32 внутри /23 исчезает, два смежных
-/24 сливаются в /23). Суперсеть собирается только из полного набора детей,
-поэтому агрегация никогда не захватывает лишние адреса. Пересечения
-российских сетей с VPN-сетями (все случаи) логируются в stderr.
+Российские части вырезаются ДО агрегации, по каждой сети отдельно
+(сервисной, antifilter или кастомной): при агрегации узкая сеть исчезает
+внутри более широкой и молча делит её судьбу при вырезании (95.100.48.0/20
+viber.com внутри 95.100.0.0/15 facebook.com, совпадающей с российской).
+После вырезания сети агрегируются (ipaddress.collapse_addresses):
+вложенные и смежные схлопываются (например, /32 внутри /23 исчезает,
+два смежных /24 сливаются в /23). Суперсеть собирается только из полного
+набора детей, поэтому агрегация никогда не захватывает лишние адреса.
+Пересечения российских сетей с VPN-сетями (все случаи) логируются в stderr.
 
 Формат routes.inc:    push "route <network> <netmask> vpn_gateway"
                      push "route-ipv6 <cidr>"
@@ -47,6 +53,7 @@
 Если любой из файлов изменился — рестарт openvpn@{{ openvpn_server_name }}.
 """
 
+import bisect
 import ipaddress
 import json
 import os
@@ -68,8 +75,8 @@ IPLIST_BATCH_SIZE = {{ openvpn_iplist_batch_size }}
 IPLIST_INCLUDE_IP4 = {{ 'True' if openvpn_iplist_include_ip4 else 'False' }}
 IPLIST_INCLUDE_IP6 = {{ 'True' if openvpn_iplist_include_ip6 else 'False' }}
 IPV6_ENABLED = {{ 'True' if openvpn_ipv6_enabled else 'False' }}
-RUSSIA_EXCLUDE_URL = "{{ openvpn_russia_exclude_url }}"
-RUSSIA_EXCLUDE_V6_URL = "{{ openvpn_russia_exclude_v6_url }}"
+RUSSIA_BASE_URL = "{{ openvpn_russia_exclude_base_url }}"
+RUSSIA_PORTALS = [{% for p in openvpn_russia_exclude_portals %}"{{ p }}"{% if not loop.last %}, {% endif %}{% endfor %}]
 RUSSIA_EXCLUDE_ENABLED = {{ 'True' if openvpn_russia_exclude_enabled else 'False' }}
 OPENVPN_SERVICE = "openvpn@{{ openvpn_server_name }}"
 
@@ -82,6 +89,11 @@ VPN_V4_SOURCES = {}
 RU_V4_NETWORKS = set()
 # Российские порталы по сетям (для логов)
 RU_V4_PORTALS = {}
+# Индекс российских сетей для вырезания: схлопнутые (collapse) сети,
+# отсортированные по началу — поиск бисекцией за O(log n)
+RU_SORTED = []
+RU_STARTS = []
+RU_COLLAPSED = set()
 # Российские IPv6-сети (фильтр для v6-маршрутов)
 RUSSIA_V6_NETWORKS = set()
 
@@ -209,6 +221,37 @@ def fetch_iplist_services():
         print(f"Загружен батч {batch[0]}..{batch[-1]} ({len(batch)} сервисов).")
 
 
+def fetch_russia(batch_size, data_kind, sink):
+    """Скачать сети выбранных российских порталов батчами.
+
+    Порталы (openvpn_russia_exclude_portals) запрашиваются по
+    IPLIST_BATCH_SIZE штук за запрос (?format=json&data=<cidr4|cidr6>&site=..)
+    — как сервисы iplist, тем же порталом. sink(net) получает каждую сеть.
+    Ошибка загрузки прерывает обновление: неполный российский список
+    нарушил бы инвариант «российский трафик никогда через VPN».
+    """
+    for i in range(0, len(RUSSIA_PORTALS), batch_size):
+        batch = RUSSIA_PORTALS[i : i + batch_size]
+        url = RUSSIA_BASE_URL + "/?" + urllib.parse.urlencode(
+            {"format": "json", "data": data_kind, "site": batch}, doseq=True
+        )
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            data = json.loads(resp.read().decode())
+        for portal, cidrs in data.items():
+            if not isinstance(cidrs, list):
+                continue
+            for cidr in cidrs:
+                try:
+                    net = ipaddress.ip_network(cidr, strict=False)
+                except ValueError:
+                    continue
+                sink(portal, net)
+        print(
+            f"Загружен российский батч {batch[0]}..{batch[-1]} "
+            f"({len(batch)} порталов, {data_kind})."
+        )
+
+
 def fetch_russia_exclude():
     """Скачать российские IPv4-сети в RU_V4_NETWORKS (net_gateway-набор).
 
@@ -216,27 +259,68 @@ def fetch_russia_exclude():
     mobile-клиентов (redirect-gateway); роутеры его не получают.
     Из VPN-набора российские части вырезаются отдельно (cut_russian_v4).
     """
-    with urllib.request.urlopen(RUSSIA_EXCLUDE_URL, timeout=60) as resp:
-        data = json.loads(resp.read().decode())
-    for portal, cidrs in data.items():
-        if not isinstance(cidrs, list):
-            continue
-        for cidr in cidrs:
-            try:
-                net = ipaddress.ip_network(cidr, strict=False)
-            except ValueError:
-                continue
-            if net.version != 4:
-                continue
-            add_v4(net, gateway="net_gateway")
-            RU_V4_PORTALS.setdefault(net, set()).add(portal)
+
+    def sink(portal, net):
+        if net.version != 4:
+            return
+        add_v4(net, gateway="net_gateway")
+        RU_V4_PORTALS.setdefault(net, set()).add(portal)
+
+    fetch_russia(IPLIST_BATCH_SIZE, "cidr4", sink)
+
+
+def prepare_ru_index():
+    """Построить индекс российских сетей: collapse + сортировка по началу.
+
+    Смежные российские сети сливаются (обе российские — объединение
+    корректно), порталы-источники объединяются для логов. После collapse
+    сети не пересекаются и не соприкасаются, а CIDR-блоки либо вкладываются,
+    либо не пересекаются — поэтому контейнер и внутренние сети ищутся
+    бисекцией за O(log n), без полного перебора по всем российским сетям.
+    """
+    global RU_SORTED, RU_STARTS, RU_COLLAPSED
+    RU_SORTED = sorted(
+        ipaddress.collapse_addresses(RU_V4_NETWORKS),
+        key=lambda n: int(n.network_address),
+    )
+    RU_STARTS = [int(n.network_address) for n in RU_SORTED]
+    RU_COLLAPSED = set(RU_SORTED)
+    # порталы исходных (несхлопнутых) сетей переносим на схлопнутые
+    for ru in RU_V4_NETWORKS:
+        i = bisect.bisect_right(RU_STARTS, int(ru.network_address)) - 1
+        if i >= 0 and int(RU_SORTED[i].broadcast_address) >= int(ru.broadcast_address):
+            RU_V4_PORTALS.setdefault(RU_SORTED[i], set()).update(
+                RU_V4_PORTALS.get(ru, set())
+            )
+
+
+def ru_containing(net):
+    """Российская схема, содержащая net (или None)."""
+    i = bisect.bisect_right(RU_STARTS, int(net.network_address)) - 1
+    if i >= 0 and int(RU_SORTED[i].broadcast_address) >= int(net.broadcast_address):
+        return RU_SORTED[i]
+    return None
+
+
+def ru_inside(net):
+    """Российские сети строго внутри net (бисекцией, без полного перебора)."""
+    lo = bisect.bisect_left(RU_STARTS, int(net.network_address))
+    hi = bisect.bisect_right(RU_STARTS, int(net.broadcast_address))
+    return [RU_SORTED[i] for i in range(lo, hi)]
 
 
 def cut_russian_v4(nets):
     """Вырезать российские сети из VPN-сетей (v4) и вернуть оставшиеся куски.
 
+    Вызывается ДО агрегации, по каждой сети отдельно: сеть, поглощённая при
+    агрегации более широкой (например, 95.100.48.0/20 viber.com внутри
+    95.100.0.0/15 facebook.com), не должна делить судьбу поглотителя —
+    если он выкинут как российский, явная сеть всё равно пушится
+    (у неё префикс длиннее).
+
     Российский трафик никогда не должен ходить через VPN:
-    - точное совпадение с российской — сеть не пушится вовсе;
+    - точное совпадение с российской (исходной или схлопнутой) — сеть
+      не пушится вовсе;
     - российская строго внутри — сеть режется на префиксы без российской
       части (ipaddress.address_exclude, итеративно для нескольких);
     - VPN строго внутри российской — пушится как есть (у неё префикс
@@ -245,28 +329,29 @@ def cut_russian_v4(nets):
     """
     result = set()
     for net in nets:
-        if net in RU_V4_NETWORKS:
+        if net in RU_V4_NETWORKS or net in RU_COLLAPSED:
             print(
                 f"VPN-сеть {fmt_vpn(net)} точно совпадает с российской "
                 f"{fmt_ru(net)} — не пушится",
                 file=sys.stderr,
             )
             continue
-        for ru in RU_V4_NETWORKS:
-            if net.subnet_of(ru):
-                print(
-                    f"VPN {fmt_vpn(net)} внутри российской {fmt_ru(ru)} "
-                    f"— пушится, у VPN префикс длиннее",
-                    file=sys.stderr,
-                )
-                break
+        container = ru_containing(net)
+        if container is not None:
+            print(
+                f"VPN {fmt_vpn(net)} внутри российской {fmt_ru(container)} "
+                f"— пушится, у VPN префикс длиннее",
+                file=sys.stderr,
+            )
+            result.add(net)
+            continue
         pieces = [net]
         again = True
         while again:
             again = False
             new_pieces = []
             for piece in pieces:
-                if piece in RU_V4_NETWORKS:
+                if piece in RU_V4_NETWORKS or piece in RU_COLLAPSED:
                     # кусок совпал с российской сетью (возможно, после разрезания)
                     print(
                         f"Кусок {fmt_vpn(piece)} совпал с российской "
@@ -274,18 +359,14 @@ def cut_russian_v4(nets):
                         file=sys.stderr,
                     )
                     continue
-                inner = None
-                for ru in RU_V4_NETWORKS:
-                    if ru != piece and ru.subnet_of(piece):
-                        inner = ru
-                        break
-                if inner is not None:
+                inner = ru_inside(piece)
+                if inner:
                     print(
-                        f"Российская {fmt_ru(inner)} вырезана из VPN "
+                        f"Российская {fmt_ru(inner[0])} вырезана из VPN "
                         f"{fmt_vpn(piece)}",
                         file=sys.stderr,
                     )
-                    new_pieces.extend(piece.address_exclude(inner))
+                    new_pieces.extend(piece.address_exclude(inner[0]))
                     again = True
                 else:
                     new_pieces.append(piece)
@@ -296,18 +377,12 @@ def cut_russian_v4(nets):
 
 def fetch_russia_exclude_v6():
     """Скачать российские IPv6-сети в RUSSIA_V6_NETWORKS (фильтр v6-маршрутов)."""
-    with urllib.request.urlopen(RUSSIA_EXCLUDE_V6_URL, timeout=60) as resp:
-        data = json.loads(resp.read().decode())
-    for cidrs in data.values():
-        if not isinstance(cidrs, list):
-            continue
-        for cidr in cidrs:
-            try:
-                net = ipaddress.ip_network(cidr, strict=False)
-            except ValueError:
-                continue
-            if net.version == 6:
-                RUSSIA_V6_NETWORKS.add(net)
+
+    def sink(portal, net):
+        if net.version == 6:
+            RUSSIA_V6_NETWORKS.add(net)
+
+    fetch_russia(IPLIST_BATCH_SIZE, "cidr6", sink)
 
 
 def parse_custom():
@@ -357,25 +432,29 @@ def parse_custom():
 def build_lines():
     """Агрегировать сети, вырезать российские части и сгенерировать push-строки.
 
-    Порядок (v4): collapse -> вырезание российских (cut_russian_v4) -> collapse
-    (куски от разных сетей могут снова стать смежными). Возвращает
-    (vpn_lines, ru_lines): VPN-маршруты для routes.inc (включается в
-    server.conf), российские net_gateway-маршруты для routes-ru.inc
-    (включается только в CCD mobile-клиентов).
+    Порядок (v4): вырезание российских (cut_russian_v4) по КАЖДОЙ сети
+    отдельно -> финальная агрегация (collapse; куски от разных сетей могут
+    стать смежными). Резать до агрегации обязательно: при агрегации узкая
+    сеть исчезает внутри более широкой (95.100.48.0/20 viber.com внутри
+    95.100.0.0/15 facebook.com, 1.1.1.0/24 из routes_custom.lst внутри
+    1.0.0.0/9 whatsapp.com) и молча делит судьбу поглотителя при вырезании.
+    Возвращает (vpn_lines, ru_lines): VPN-маршруты для routes.inc
+    (включается в server.conf), российские net_gateway-маршруты для
+    routes-ru.inc (включается только в CCD mobile-клиентов).
     """
-    vpn4_collapsed = list(ipaddress.collapse_addresses(VPN_V4_NETWORKS))
     if RU_V4_NETWORKS:
-        vpn4_cut = cut_russian_v4(vpn4_collapsed)
+        prepare_ru_index()
+        vpn4_cut = cut_russian_v4(VPN_V4_NETWORKS)
     else:
-        vpn4_cut = set(vpn4_collapsed)
+        vpn4_cut = set(VPN_V4_NETWORKS)
     vpn4 = list(ipaddress.collapse_addresses(vpn4_cut))
     vpn6 = (
         list(ipaddress.collapse_addresses(VPN_V6_NETWORKS)) if IPV6_ENABLED else []
     )
     ru4 = list(ipaddress.collapse_addresses(RU_V4_NETWORKS))
     print(
-        f"Агрегация: VPN v4 {len(VPN_V4_NETWORKS)} -> {len(vpn4_collapsed)} "
-        f"(агрегация) -> {len(vpn4)} (после вырезания российских), "
+        f"Агрегация: VPN v4 {len(VPN_V4_NETWORKS)} -> {len(vpn4_cut)} "
+        f"(после вырезания российских) -> {len(vpn4)} (агрегация), "
         f"VPN v6 {len(VPN_V6_NETWORKS)} -> {len(vpn6)}, "
         f"российские net_gateway: {len(ru4)}."
     )
@@ -393,7 +472,7 @@ def build_lines():
 
 def main():
     # Российские v6-сети — до всех v6-источников (нужен фильтр RUSSIA_V6_NETWORKS)
-    if IPV6_ENABLED and RUSSIA_EXCLUDE_ENABLED:
+    if IPV6_ENABLED and RUSSIA_EXCLUDE_ENABLED and RUSSIA_PORTALS:
         try:
             fetch_russia_exclude_v6()
         except Exception as e:
@@ -418,12 +497,19 @@ def main():
     parse_custom()
 
     # Российские сети — после всех VPN-источников (нужен VPN_V4_NETWORKS)
-    if RUSSIA_EXCLUDE_ENABLED:
+    if RUSSIA_EXCLUDE_ENABLED and RUSSIA_PORTALS:
         try:
             fetch_russia_exclude()
         except Exception as e:
             print(f"Ошибка загрузки российских сетей: {e}", file=sys.stderr)
             sys.exit(1)
+    elif RUSSIA_EXCLUDE_ENABLED:
+        print(
+            "ВНИМАНИЕ: порталы российских исключений не заданы "
+            "(openvpn_russia_exclude_portals=[]) — из VPN-маршрутов ничего "
+            "не вырезается, routes-ru.inc пуст.",
+            file=sys.stderr,
+        )
     else:
         print("Исключение российских сетей отключено (openvpn_russia_exclude_enabled=false).")
 

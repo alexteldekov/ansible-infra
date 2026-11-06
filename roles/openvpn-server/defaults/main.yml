@@ -48,11 +48,18 @@ openvpn_iplist_include_ip6: false
 # Сети из сервисов/antifilter/custom не дублируются; ошибка загрузки
 # прерывает обновление (старые маршруты сохраняются).
 openvpn_russia_exclude_enabled: true
-openvpn_russia_exclude_url: https://russia.iplist.opencck.org/?format=json&data=cidr4
-# Российские IPv6-сети: route-ipv6 на tun не умеет net_gateway, поэтому
-# v6-сети, пересекающиеся с этим списком, не пушатся вовсе (фильтр) —
-# клиенты ходят к ним по нативному маршруту провайдера
-openvpn_russia_exclude_v6_url: https://russia.iplist.opencck.org/?format=json&data=cidr6
+# Порталы-источники российских сетей (russia.iplist.opencck.org), как на сайте:
+# yandex.ru, mail.ru, sberbank.ru, ... Запрашиваются батчами, как сервисы
+# iplist. Полный каталог (87 порталов) — в комментариях
+# inventory/production/group_vars/vpn_servers.yml.
+# ПУСТОЙ СПИСОК = российские исключения отключены: из VPN-маршрутов ничего
+# не вырезается, routes-ru.inc пуст (инвариант «российский трафик никогда
+# через VPN» перестаёт соблюдаться автоматически — выберите порталы).
+openvpn_russia_exclude_portals: []
+openvpn_russia_exclude_base_url: https://russia.iplist.opencck.org
+# IPv6: route-ipv6 на tun не умеет net_gateway, поэтому v6-сети выбранных
+# порталов работают фильтром — v6-маршруты, пересекающиеся с ними, не
+# пушатся вовсе (клиенты ходят к ним по нативному маршруту провайдера)
 
 # Paths
 easyrsa_dir: /etc/openvpn/easyrsa

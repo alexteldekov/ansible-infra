@@ -75,8 +75,8 @@ See `defaults/main.yml`:
 | `openvpn_iplist_include_ip4` | `false` | Include individual service IPs as `/32` routes (large services have tens of thousands) |
 | `openvpn_iplist_include_ip6` | `false` | Include individual service IPv6 addresses as `/128` `route-ipv6` pushes |
 | `openvpn_russia_exclude_enabled` | `true` | Push Russian networks via `net_gateway` (ISP route) instead of VPN |
-| `openvpn_russia_exclude_url` | `https://russia.iplist.opencck.org/?format=json&data=cidr4` | Russian networks list URL (IPv4) |
-| `openvpn_russia_exclude_v6_url` | `https://russia.iplist.opencck.org/?format=json&data=cidr6` | Russian networks list URL (IPv6, used as a filter) |
+| `openvpn_russia_exclude_portals` | `[]` | Russian portals to use as exclusions (`russia.iplist.opencck.org`, e.g. `yandex.ru`, `mail.ru`; full catalog commented in `group_vars/vpn_servers.yml`). **Empty list = no Russian exclusions at all** |
+| `openvpn_russia_exclude_base_url` | `https://russia.iplist.opencck.org` | Russian portal base URL (fetched in batches like iplist services) |
 
 ### `openvpn_clients` format
 
@@ -181,12 +181,14 @@ scp root@<vpn-server>:/etc/openvpn/client-configs/<name>.ovpn .
    - `149.154.164.0/22` — CIDR
    - `apps.apple.com` — hostname (resolved to IPv4, each address becomes a `/32` route)
    - Lines starting with `#` are ignored
-4. **Russian networks exclusion** — `openvpn_russia_exclude_enabled` (default: `true`): Russian traffic must **never** go through the VPN. IPv4 VPN routes are checked against zones from `openvpn_russia_exclude_url` (default: `https://russia.iplist.opencck.org/?format=json&data=cidr4`):
+
+   Custom nets are cut against the Russian list exactly like service nets — but **before** the shared aggregation: a net (service or custom) must not disappear inside a wider block that happens to be dropped as Russian (e.g. viber.com's `95.100.48.0/20` inside facebook.com's `95.100.0.0/15`, which exactly matches the Russian `95.100.0.0/15`; or a custom `1.1.1.0/24` inside WhatsApp's `1.0.0.0/9`). Every explicitly listed net is cut on its own: an exact match with a Russian net is dropped, a net strictly inside a Russian net is still pushed (longer prefix wins), Russian nets strictly inside are cut out.
+4. **Russian networks exclusion** — `openvpn_russia_exclude_enabled` (default: `true`) + `openvpn_russia_exclude_portals` (default: `[]`, full catalog commented in `group_vars/vpn_servers.yml`): Russian traffic must **never** go through the VPN. Zones of the **selected portals** are fetched in batches from `openvpn_russia_exclude_base_url` (`?format=json&data=cidr4&site=...`, same API as iplist services). **An empty portal list disables the exclusions entirely** — nothing is cut and `routes-ru.inc` stays empty (a loud warning is logged). IPv4 VPN routes are checked against these zones:
    - Russian net **equals** a VPN net → the VPN route is not pushed at all;
    - Russian net is **strictly inside** a VPN net → the VPN net is split into prefixes with the Russian part cut out (`ipaddress.address_exclude`);
    - VPN net is **strictly inside** a Russian net → pushed as-is (longer prefix wins, the rest of the Russian net goes via the default route).
 
-   The Russian networks themselves are pushed as `push "route <ip> <netmask> net_gateway"` into a **separate file** `routes-ru.inc` — needed **only by mobile clients** (`redirect-gateway` captures all IPv4). It is included via `config` in the CCD files of mobile clients only; router clients never see it (their default route is the ISP, and Keenetic's client doesn't implement `net_gateway`). A `push-remove net_gateway` in the CCD **cannot** be used instead: OpenVPN matches `push-remove` by **prefix**, not substring (`strncmp(e->option, p, strlen(p))` in `push.c`), so it never matches `route ... net_gateway` entries (verified against OpenVPN 2.5). All cut/overlap cases are logged to stderr. For IPv6, `route-ipv6` on `tun` cannot express `net_gateway`, so zones from `openvpn_russia_exclude_v6_url` (default: `...&data=cidr6`) act as a **filter**: any service/custom IPv6 route overlapping a Russian network is not pushed at all. A download failure aborts the update (existing routes are preserved).
+   The Russian networks themselves are pushed as `push "route <ip> <netmask> net_gateway"` into a **separate file** `routes-ru.inc` — needed **only by mobile clients** (`redirect-gateway` captures all IPv4). It is included via `config` in the CCD files of mobile clients only; router clients never see it (their default route is the ISP, and Keenetic's client doesn't implement `net_gateway`). A `push-remove net_gateway` in the CCD **cannot** be used instead: OpenVPN matches `push-remove` by **prefix**, not substring (`strncmp(e->option, p, strlen(p))` in `push.c`), so it never matches `route ... net_gateway` entries (verified against OpenVPN 2.5). All cut/overlap cases are logged to stderr. For IPv6, `route-ipv6` on `tun` cannot express `net_gateway`, so the same portals' `cidr6` zones act as a **filter**: any service/custom IPv6 route overlapping a Russian network is not pushed at all. A download failure aborts the update (existing routes are preserved).
 
 If either generated file (`routes.inc` / `routes-ru.inc`) differs from the current one, OpenVPN is restarted so clients receive the updated routes. If the antifilter download fails, the update is aborted (existing routes are preserved).
 
