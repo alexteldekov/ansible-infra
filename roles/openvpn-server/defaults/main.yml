@@ -21,6 +21,10 @@ home_netmask: 255.255.0.0
 # Скрипт обновления routes.inc (запускается по таймеру systemd)
 openvpn_routes_script: /usr/local/sbin/update_openvpn_routes.py
 openvpn_routes_inc: "{{ openvpn_config_dir }}/routes.inc"
+# Российские исключения (net_gateway) — отдельный файл: включается только
+# в CCD mobile-клиентов через config. push-remove net_gateway из CCD не
+# работает: OpenVPN матчит push-remove по префиксу, а не по подстроке
+openvpn_routes_ru_inc: "{{ openvpn_config_dir }}/routes-ru.inc"
 openvpn_routes_custom_list: "{{ openvpn_config_dir }}/routes_custom.lst"
 # Подключать ли список antifilter (18+ тыс. маршрутов — клиенты могут захлебнуться)
 openvpn_antifilter_enabled: false
@@ -37,9 +41,10 @@ openvpn_iplist_batch_size: 20
 openvpn_iplist_include_ip4: false
 # То же для IPv6 (ip6 как /128-маршруты route-ipv6)
 openvpn_iplist_include_ip6: false
-# Исключать российские сети из VPN: пушатся маршруты через net_gateway
-# (исходный шлюз клиента), чтобы российский трафик шёл через провайдера.
-# Актуально прежде всего для mobile-клиентов (redirect-gateway).
+# Исключать российские сети из VPN: российские сети пушатся через net_gateway
+# (исходный шлюз клиента) отдельным файлом routes-ru.inc, который включается
+# только в CCD mobile-клиентов (redirect-gateway). Роутеры его не получают:
+# у них default route и так через провайдера, а Keenetic не умеет net_gateway.
 # Сети из сервисов/antifilter/custom не дублируются; ошибка загрузки
 # прерывает обновление (старые маршруты сохраняются).
 openvpn_russia_exclude_enabled: true

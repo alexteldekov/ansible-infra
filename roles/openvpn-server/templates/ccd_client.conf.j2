@@ -7,6 +7,16 @@ ifconfig-push {{ item.static_ip }} {{ openvpn_netmask }}
 # Route to subnet behind this client (router)
 iroute {{ item.client_subnet }} {{ item.client_netmask }}
 {% endif %}
+{% if item.type is defined and item.type == 'router' %}
+# Router: российские исключения (net_gateway) не нужны — default route и так
+# через провайдера, а Keenetic не умеет net_gateway. routes-ru.inc не включаем.
+# (push-remove net_gateway из CCD не работает: OpenVPN матчит по префиксу,
+# а не по подстроке — поэтому роутеры просто не получают этот файл.)
+{% elif openvpn_russia_exclude_enabled %}
+# Mobile: российские сети через net_gateway — обходят redirect-gateway def1.
+# Отдельный файл, включаемый только в CCD mobile-клиентов (см. defaults).
+config {{ openvpn_routes_ru_inc }}
+{% endif %}
 {% if openvpn_ipv6_enabled and not (item.ipv6 | default(true)) %}
 # IPv6 disabled for this client (ipv6: false): drop tunnel v6 address and v6 routes
 push-remove ifconfig-ipv6

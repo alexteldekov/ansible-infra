@@ -234,10 +234,12 @@
     daemon_reload: true
   tags: [openvpn, config, routes]
 
-- name: Generate initial routes.inc (first run only)
+- name: Generate initial routes files (first run only)
   ansible.builtin.command:
     cmd: "{{ openvpn_routes_script }}"
-    creates: "{{ openvpn_routes_inc }}"
+    # creates по routes-ru.inc: при апгрейде с старой версии routes.inc уже
+    # есть, а routes-ru.inc ещё нет — скрипт должен отработать и создать оба
+    creates: "{{ openvpn_routes_ru_inc }}"
   tags: [openvpn, config, routes]
 
 - name: Deploy per-client CCD files

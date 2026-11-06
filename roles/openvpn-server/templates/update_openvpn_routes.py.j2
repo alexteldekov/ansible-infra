@@ -16,21 +16,35 @@
       - сети в формате IP/NETMASK  (149.154.164.0/255.255.252.0)
       - сети в формате CIDR        (149.154.164.0/22, 2a00:1450:4000::/37)
       - имена хостов               (apps.apple.com — резолвятся в IPv4)
-  4. Российские сети (russia.iplist.opencck.org) — исключение из VPN:
-      IPv4 пушится через net_gateway (исходный шлюз клиента), чтобы российский
-      трафик шёл через провайдера. IPv6 фильтруется: route-ipv6 на tun не умеет
-      net_gateway, поэтому v6-сети, пересекающиеся с российским списком,
-      не пушатся вовсе — клиенты ходят к ним по нативному маршруту провайдера.
+  4. Российские сети (russia.iplist.opencck.org) — российский трафик никогда
+      не должен ходить через VPN:
+      - из VPN-маршрутов российские части вырезаются (cut_russian_v4):
+        точное совпадение — сеть не пушится вовсе; российская строго внутри
+        VPN — сеть режется на префиксы без российской части (address_exclude);
+        VPN строго внутри российской — пушится как есть (у неё префикс
+        длиннее, остальная часть российской пойдёт по дефолту);
+      - сами российские сети пушатся через net_gateway в отдельный файл
+        routes-ru.inc — он включается только в CCD mobile-клиентов
+        (redirect-gateway захватывает весь v4-трафик). Роутеры его не
+        получают: у них default route и так через провайдера, а Keenetic
+        не умеет net_gateway. Вырезать эти пуши через push-remove
+        net_gateway из CCD нельзя: OpenVPN матчит push-remove по префиксу,
+        а не по подстроке (push.c: strncmp(e->option, p, strlen(p))) —
+        "route ... net_gateway" под "net_gateway" не подпадает;
+      - IPv6 фильтруется: route-ipv6 на tun не умеет net_gateway, поэтому
+        v6-сети, пересекающиеся с российским списком, не пушатся вовсе.
       Ошибка загрузки прерывает обновление.
 
 Перед выводом сети агрегируются (ipaddress.collapse_addresses): вложенные
 и смежные сети схлопываются (например, /32 внутри /23 исчезает, два смежных
 /24 сливаются в /23). Суперсеть собирается только из полного набора детей,
-поэтому агрегация никогда не захватывает лишние адреса.
+поэтому агрегация никогда не захватывает лишние адреса. Пересечения
+российских сетей с VPN-сетями (все случаи) логируются в stderr.
 
-Формат routes.inc: push "route <network> <netmask> vpn_gateway"
-                  push "route-ipv6 <cidr>"
-Если routes.inc изменился — рестарт openvpn@{{ openvpn_server_name }}.
+Формат routes.inc:    push "route <network> <netmask> vpn_gateway"
+                     push "route-ipv6 <cidr>"
+Формат routes-ru.inc: push "route <network> <netmask> net_gateway"
+Если любой из файлов изменился — рестарт openvpn@{{ openvpn_server_name }}.
 """
 
 import ipaddress
@@ -44,6 +58,7 @@ import urllib.parse
 import urllib.request
 
 ROUTES_INC = "{{ openvpn_routes_inc }}"
+ROUTES_RU_INC = "{{ openvpn_routes_ru_inc }}"
 CUSTOM_LIST = "{{ openvpn_routes_custom_list }}"
 ANTIFILTER_URL = "{{ openvpn_antifilter_url }}"
 ANTIFILTER_ENABLED = {{ 'True' if openvpn_antifilter_enabled else 'False' }}
@@ -61,18 +76,40 @@ OPENVPN_SERVICE = "openvpn@{{ openvpn_server_name }}"
 # Сети, направляемые в VPN
 VPN_V4_NETWORKS = set()
 VPN_V6_NETWORKS = set()
+# Источники VPN v4-сетей (для логов: сервис/antifilter/custom)
+VPN_V4_SOURCES = {}
 # Российские IPv4-сети (net_gateway — через исходный шлюз клиента)
 RU_V4_NETWORKS = set()
+# Российские порталы по сетям (для логов)
+RU_V4_PORTALS = {}
 # Российские IPv6-сети (фильтр для v6-маршрутов)
 RUSSIA_V6_NETWORKS = set()
 
 
-def add_v4(net, gateway="vpn_gateway"):
+def add_v4(net, gateway="vpn_gateway", source=""):
     """Добавить IPv4-сеть в набор (vpn_gateway или net_gateway)."""
     if gateway == "vpn_gateway":
         VPN_V4_NETWORKS.add(net)
+        if source:
+            VPN_V4_SOURCES.setdefault(net, source)
     else:
         RU_V4_NETWORKS.add(net)
+
+
+def fmt_vpn(net):
+    """Сеть с источником для логов (если известен)."""
+    src = VPN_V4_SOURCES.get(net)
+    return f"{net.with_prefixlen} ({src})" if src else net.with_prefixlen
+
+
+def fmt_ru(net):
+    """Российская сеть с порталами-источниками для логов (если известны)."""
+    portals = RU_V4_PORTALS.get(net)
+    if not portals:
+        return net.with_prefixlen
+    shown = ", ".join(sorted(portals)[:3])
+    more = f" и ещё {len(portals) - 3}" if len(portals) > 3 else ""
+    return f"{net.with_prefixlen} ({shown}{more})"
 
 
 def add_v6(net, source=""):
@@ -107,7 +144,7 @@ def fetch_antifilter():
                 continue
             if net.version != 4:
                 continue
-            add_v4(net)
+            add_v4(net, source="antifilter")
 
 
 def fetch_iplist_services():
@@ -144,7 +181,7 @@ def fetch_iplist_services():
                     continue
                 if net.version != 4:
                     continue
-                add_v4(net)
+                add_v4(net, source=service)
             if IPV6_ENABLED:
                 # IPv6-сети сервисов — из того же ответа, без доп. запросов
                 for cidr in entry.get("cidr6", []):
@@ -168,22 +205,20 @@ def fetch_iplist_services():
                         net = ipaddress.ip_network(f"{ip}/32", strict=False)
                     except ValueError:
                         continue
-                    add_v4(net)
+                    add_v4(net, source=service)
         print(f"Загружен батч {batch[0]}..{batch[-1]} ({len(batch)} сервисов).")
 
 
 def fetch_russia_exclude():
-    """Скачать российские IPv4-сети и добавить в net_gateway-набор.
+    """Скачать российские IPv4-сети в RU_V4_NETWORKS (net_gateway-набор).
 
-    Такие маршруты перекрывают redirect-gateway на mobile-клиентах:
-    российский трафик идёт через провайдера, а не через VPN.
-    Сети, точно совпадающие с направляемыми в VPN, не дублируются
-    (явный выбор сервиса побеждает); сеть строго внутри сервисной —
-    пушится: более длинный префикс выигрывает, кусок идёт через провайдера.
+    Эти сети попадают в routes-ru.inc, который включается только в CCD
+    mobile-клиентов (redirect-gateway); роутеры его не получают.
+    Из VPN-набора российские части вырезаются отдельно (cut_russian_v4).
     """
     with urllib.request.urlopen(RUSSIA_EXCLUDE_URL, timeout=60) as resp:
         data = json.loads(resp.read().decode())
-    for cidrs in data.values():
+    for portal, cidrs in data.items():
         if not isinstance(cidrs, list):
             continue
         for cidr in cidrs:
@@ -191,9 +226,72 @@ def fetch_russia_exclude():
                 net = ipaddress.ip_network(cidr, strict=False)
             except ValueError:
                 continue
-            if net.version != 4 or net in VPN_V4_NETWORKS:
+            if net.version != 4:
                 continue
             add_v4(net, gateway="net_gateway")
+            RU_V4_PORTALS.setdefault(net, set()).add(portal)
+
+
+def cut_russian_v4(nets):
+    """Вырезать российские сети из VPN-сетей (v4) и вернуть оставшиеся куски.
+
+    Российский трафик никогда не должен ходить через VPN:
+    - точное совпадение с российской — сеть не пушится вовсе;
+    - российская строго внутри — сеть режется на префиксы без российской
+      части (ipaddress.address_exclude, итеративно для нескольких);
+    - VPN строго внутри российской — пушится как есть (у неё префикс
+      длиннее, остальная часть российской пойдёт по дефолту).
+    Все случаи логируются в stderr.
+    """
+    result = set()
+    for net in nets:
+        if net in RU_V4_NETWORKS:
+            print(
+                f"VPN-сеть {fmt_vpn(net)} точно совпадает с российской "
+                f"{fmt_ru(net)} — не пушится",
+                file=sys.stderr,
+            )
+            continue
+        for ru in RU_V4_NETWORKS:
+            if net.subnet_of(ru):
+                print(
+                    f"VPN {fmt_vpn(net)} внутри российской {fmt_ru(ru)} "
+                    f"— пушится, у VPN префикс длиннее",
+                    file=sys.stderr,
+                )
+                break
+        pieces = [net]
+        again = True
+        while again:
+            again = False
+            new_pieces = []
+            for piece in pieces:
+                if piece in RU_V4_NETWORKS:
+                    # кусок совпал с российской сетью (возможно, после разрезания)
+                    print(
+                        f"Кусок {fmt_vpn(piece)} совпал с российской "
+                        f"{fmt_ru(piece)} — не пушится",
+                        file=sys.stderr,
+                    )
+                    continue
+                inner = None
+                for ru in RU_V4_NETWORKS:
+                    if ru != piece and ru.subnet_of(piece):
+                        inner = ru
+                        break
+                if inner is not None:
+                    print(
+                        f"Российская {fmt_ru(inner)} вырезана из VPN "
+                        f"{fmt_vpn(piece)}",
+                        file=sys.stderr,
+                    )
+                    new_pieces.extend(piece.address_exclude(inner))
+                    again = True
+                else:
+                    new_pieces.append(piece)
+            pieces = new_pieces
+        result.update(pieces)
+    return result
 
 
 def fetch_russia_exclude_v6():
@@ -241,7 +339,7 @@ def parse_custom():
                     continue
                 # CIDR (149.154.164.0/22) или netmask (149.154.164.0/255.255.252.0)
                 try:
-                    add_v4(ipaddress.ip_network(entry, strict=False))
+                    add_v4(ipaddress.ip_network(entry, strict=False), source="routes_custom.lst")
                 except ValueError:
                     continue
             else:
@@ -253,31 +351,33 @@ def parse_custom():
                     continue
                 for info in set(infos):
                     ip = info[4][0]
-                    add_v4(ipaddress.ip_network(f"{ip}/32", strict=False))
+                    add_v4(ipaddress.ip_network(f"{ip}/32", strict=False), source="routes_custom.lst")
 
 
 def build_lines():
-    """Агрегировать сети (collapse_addresses) и сгенерировать push-строки.
+    """Агрегировать сети, вырезать российские части и сгенерировать push-строки.
 
-    Схлопываются вложенные и смежные сети — суперсеть собирается только
-    из полного набора детей, лишние адреса не захватываются. Российская
-    сеть, совпавшая после агрегации с сервисной, отбрасывается
-    (иначе — два пуша одного префикса с разными шлюзами).
+    Порядок (v4): collapse -> вырезание российских (cut_russian_v4) -> collapse
+    (куски от разных сетей могут снова стать смежными). Возвращает
+    (vpn_lines, ru_lines): VPN-маршруты для routes.inc (включается в
+    server.conf), российские net_gateway-маршруты для routes-ru.inc
+    (включается только в CCD mobile-клиентов).
     """
-    vpn4 = list(ipaddress.collapse_addresses(VPN_V4_NETWORKS))
+    vpn4_collapsed = list(ipaddress.collapse_addresses(VPN_V4_NETWORKS))
+    if RU_V4_NETWORKS:
+        vpn4_cut = cut_russian_v4(vpn4_collapsed)
+    else:
+        vpn4_cut = set(vpn4_collapsed)
+    vpn4 = list(ipaddress.collapse_addresses(vpn4_cut))
     vpn6 = (
         list(ipaddress.collapse_addresses(VPN_V6_NETWORKS)) if IPV6_ENABLED else []
     )
-    vpn4_set = set(vpn4)
-    ru4 = [
-        net
-        for net in ipaddress.collapse_addresses(RU_V4_NETWORKS)
-        if net not in vpn4_set
-    ]
+    ru4 = list(ipaddress.collapse_addresses(RU_V4_NETWORKS))
     print(
-        f"Агрегация: VPN v4 {len(VPN_V4_NETWORKS)} -> {len(vpn4)}, "
+        f"Агрегация: VPN v4 {len(VPN_V4_NETWORKS)} -> {len(vpn4_collapsed)} "
+        f"(агрегация) -> {len(vpn4)} (после вырезания российских), "
         f"VPN v6 {len(VPN_V6_NETWORKS)} -> {len(vpn6)}, "
-        f"российские {len(RU_V4_NETWORKS)} -> {len(ru4)}."
+        f"российские net_gateway: {len(ru4)}."
     )
 
     lines = set()
@@ -285,9 +385,10 @@ def build_lines():
         lines.add(f'push "route {net.network_address} {net.netmask} vpn_gateway"')
     for net in vpn6:
         lines.add(f'push "route-ipv6 {net.with_prefixlen}"')
+    ru_lines = set()
     for net in ru4:
-        lines.add(f'push "route {net.network_address} {net.netmask} net_gateway"')
-    return lines
+        ru_lines.add(f'push "route {net.network_address} {net.netmask} net_gateway"')
+    return lines, ru_lines
 
 
 def main():
@@ -326,29 +427,42 @@ def main():
     else:
         print("Исключение российских сетей отключено (openvpn_russia_exclude_enabled=false).")
 
-    routes = build_lines()
+    routes, ru_routes = build_lines()
 
     header = "# Сгенерировано update_openvpn_routes.py — не редактируйте вручную\n"
-    body = "\n".join(sorted(routes)) + "\n"
-    new_content = header + body
 
-    old_content = ""
-    if os.path.exists(ROUTES_INC):
-        with open(ROUTES_INC) as f:
-            old_content = f.read()
+    def write_inc(path, lines):
+        """Атомарно записать файл, если содержимое изменилось; True — если изменился."""
+        body = "\n".join(sorted(lines)) + "\n" if lines else ""
+        new_content = header + body
+        old_content = ""
+        if os.path.exists(path):
+            with open(path) as f:
+                old_content = f.read()
+        if new_content == old_content:
+            return False
+        with tempfile.NamedTemporaryFile(
+            "w", dir=os.path.dirname(path), delete=False
+        ) as tmp:
+            tmp.write(new_content)
+            tmp_path = tmp.name
+        os.chmod(tmp_path, 0o640)
+        os.rename(tmp_path, path)
+        return True
 
-    if new_content == old_content:
+    changed = write_inc(ROUTES_INC, routes)
+    changed_ru = write_inc(ROUTES_RU_INC, ru_routes)
+    if not (changed or changed_ru):
         print("Маршруты не изменились.")
         return
-
-    with tempfile.NamedTemporaryFile(
-        "w", dir=os.path.dirname(ROUTES_INC), delete=False
-    ) as tmp:
-        tmp.write(new_content)
-        tmp_path = tmp.name
-    os.chmod(tmp_path, 0o640)
-    os.rename(tmp_path, ROUTES_INC)
-    print(f"routes.inc обновлён ({len(routes)} маршрутов), рестарт openvpn.")
+    if changed:
+        print(f"routes.inc обновлён ({len(routes)} маршрутов).")
+    if changed_ru:
+        print(
+            f"routes-ru.inc обновлён ({len(ru_routes)} российских "
+            f"net_gateway-маршрутов)."
+        )
+    print("Рестарт openvpn.")
     subprocess.run(["systemctl", "restart", OPENVPN_SERVICE], check=True)
 
 

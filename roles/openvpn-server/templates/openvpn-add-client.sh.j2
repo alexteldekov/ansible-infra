@@ -110,6 +110,15 @@ CCD_FILE="$CCD_DIR/$NAME"
     if [ "$TYPE" = "router" ] && [ -n "$SUBNET" ]; then
         echo "iroute $SUBNET $NETMASK"
     fi
+    if [ "$TYPE" = "router" ]; then
+        echo "# Роутер: routes-ru.inc (российские net_gateway) не включаем —"
+        echo "# default route и так через провайдера, Keenetic не умеет net_gateway"
+    else
+{% if openvpn_russia_exclude_enabled %}
+        echo "# Mobile: российские сети через net_gateway (обход redirect-gateway)"
+        echo "config {{ openvpn_routes_ru_inc }}"
+{% endif %}
+    fi
     if [ "$IPV6_OFF" = true ]; then
         echo "# IPv6 отключён (--no-ipv6)"
         echo "push-remove ifconfig-ipv6"
